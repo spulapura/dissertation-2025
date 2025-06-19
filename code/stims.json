@@ -1,0 +1,67 @@
+[
+  {
+    "action": "dig a hole",
+    "predictable-instrument": "shovel",
+    "unpredictable-instrument": "fork"
+  },
+  {
+    "action": "chop carrots",
+    "predictable-instrument": "knife",
+    "unpredictable-instrument": "shovel"
+  },
+  {
+    "action": "brush her teeth",
+    "predictable-instrument": "toothbrush",
+    "unpredictable-instrument": "knife"
+  },
+  {
+    "action": "clean the porch",
+    "predictable-instrument": "broom",
+    "unpredictable-instrument": "toothbrush"
+  },
+  {
+    "action": "repair her brakes",
+    "predictable-instrument": "wrench",
+    "unpredictable-instrument": "broom"
+  },
+  {
+    "action": "secure her yacht",
+    "predictable-instrument": "rope",
+    "unpredictable-instrument": "wrench"
+  },
+  {
+    "action": "accessorize her dress",
+    "predictable-instrument": "belt",
+    "unpredictable-instrument": "rope"
+  },
+  {
+    "action": "transport her groceries",
+    "predictable-instrument": "cart",
+    "unpredictable-instrument": "belt"
+  },
+  {
+    "action": "drain spaghetti",
+    "predictable-instrument": "strainer",
+    "unpredictable-instrument": "cart"
+  },
+  {
+    "action": "wrap presents",
+    "predictable-instrument": "ribbon",
+    "unpredictable-instrument": "strainer"
+  },
+  {
+    "action": "wash the dishes",
+    "predictable-instrument": "sponge",
+    "unpredictable-instrument": "ribbon"
+  },
+  {
+    "action": "write a letter",
+    "predictable-instrument": "pen",
+    "unpredictable-instrument": "sponge"
+  },
+  {
+    "action": "eat steak",
+    "predictable-instrument": "fork",
+    "unpredictable-instrument": "pen"
+  }
+]
