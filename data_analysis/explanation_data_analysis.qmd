@@ -1,6 +1,6 @@
 ---
 title: "explanation_data_analysis"
-format: gfm
+format: pdf
 editor: visual
 ---
 
