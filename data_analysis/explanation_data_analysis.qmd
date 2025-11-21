@@ -63,6 +63,7 @@ df_numeric <- df_pivot %>%
   mutate(rating_num = likert_map[rating])  
 
 df_numeric$type <- factor(df_numeric$type, levels = c("UNEXP", "EXP"))
+df_numeric$condition <- factor(df_numeric$condition, levels = c("NR", "R"))
 
 
 ```
@@ -183,6 +184,41 @@ fit_Q2 <- brm(Q2 ~ condition * type +
 
 ```{r}
 summary(fit_Q2)
+```
+
+```{r}
+
+library(ordinal) 
+
+#trying an ordinal frequentist model who knows at this point 
+
+df_diff$Q1_factor <- factor(df_diff$Q1, levels = c("1", "2", "3", "4", "5", "6", "7"))
+
+clmm_Q1 <- clmm(Q1_factor ~ condition * type + 
+                  (1|ResponseId) + 
+                  (1|item), 
+                  data = df_diff)
+
+```
+
+```{r}
+summary(clmm_Q1)
+
+```
+
+```{r}
+
+df_diff$Q2_factor <- factor(df_diff$Q2, levels = c("1", "2", "3", "4", "5", "6", "7"))
+
+clmm_Q2 <- clmm(Q2_factor ~ condition * type + 
+                  (1|ResponseId) + 
+                  (1|item), 
+                  data = df_diff)
+```
+
+```{r}
+
+summary(clmm_Q2)
 ```
 
 the end :)
