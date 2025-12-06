@@ -1,0 +1,217 @@
+---
+title: "explanation_data_analysis"
+format: pdf
+editor: visual
+---
+
+```{r}
+
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(brms)
+library(lme4)
+library(lmerTest)
+library(ggpubr)
+```
+
+```{r}
+
+df_full <- read_csv("/home/pulapura/Documents/MSc Speech and Language Processing/diss_data_edit.csv")
+
+#I manually coded to itemname-itemtype-condition-question format in excel
+# so I renamed the headers where appropriate (qualtrics output was the full question text)
+old_names <- names(df_full) 
+new_names <- df_full[2, ] |> as.character()
+new_names[is.na(new_names) | new_names == ""] <- old_names[is.na(new_names) | new_names == ""]
+names(df_full) <- new_names
+df_clean <- df_full[-c(1:4), ]
+```
+
+```{r}
+
+#Create a new row per participant per item per question
+#and replace likert labels with numbers
+
+df_pivot <- df_clean %>% 
+  pivot_longer(
+    cols = matches("^[A-Za-z]+-(exp|unexp)-(r|nr)-[1-3]$"),
+    names_to = c("item", "type", "condition", "question"),
+    names_pattern = "([A-Za-z]+)-(exp|unexp)-(r|nr)-([1-3])",
+    values_to = "rating"
+  )
+
+df_pivot <- df_pivot |>
+  mutate(
+    type = toupper(type),
+    condition = toupper(condition),
+    question = recode(question,"1" = "Q1","2" = "Q2", "3"="Q3")
+  )
+
+likert_map <- c(
+  "Very unfavorable" = 1,
+  "Unfavorable" = 2,
+  "Somewhat unfavorable" = 3,
+  "Neither unfavorable nor favorable" = 4,
+  "Somewhat favorable" = 5,
+  "Favorable" = 6,
+  "Very favorable" = 7
+)
+
+df_numeric <- df_pivot %>%
+  mutate(rating_num = likert_map[rating])  
+
+df_numeric$type <- factor(df_numeric$type, levels = c("UNEXP", "EXP"))
+df_numeric$condition <- factor(df_numeric$condition, levels = c("NR", "R"))
+
+
+```
+
+```{r}
+
+#quick summary stats
+
+df_summary <- df_numeric %>%
+  filter(question %in% c("Q1","Q2")) %>%
+  group_by(type, condition, question) %>%
+  summarise(
+    mean = mean(rating_num, na.rm = TRUE),
+    sd = sd(rating_num, na.rm = TRUE),
+  )
+
+df_summary
+```
+
+```{r}
+
+#violin plots for Q1 (Did Alice expect Bob to react favorably?)
+
+ggplot(df_numeric %>% filter(question == "Q1"),
+       aes(x = condition, y = rating_num, fill = condition)) +
+  geom_violin(alpha = 0.6) +             
+  geom_jitter(width = 0.1, size = 1.5, alpha = 0.15) +  
+  geom_boxplot(width = 0.1, fill = "white") +
+  facet_grid(cols = vars(type)) +
+  labs(
+    x = "Condition", y = "Rating", title = "RQ1: Ratings per Condition", fill="Condition") 
+
+```
+
+```{r}
+
+#Violin plots for Q2 ("How will Bob actually feel?")
+
+ggplot(df_numeric %>% filter(question == "Q2"),
+       aes(x = condition, y = rating_num, fill = condition)) +
+  geom_violin(alpha = 0.6) +             
+  geom_jitter(width = 0.1, size = 1.5, alpha = 0.15) +  
+  geom_boxplot(width = 0.1, fill = "white") +
+  facet_grid(cols = vars(type)) +
+  labs(x = "Condition", y = "Rating", title = "RQ2: Ratings per Condition", fill="Condition") 
+```
+
+```{r}
+
+df_diff <- df_numeric %>%
+  filter(question %in% c("Q1", "Q2")) %>%
+  select(ResponseId, item, type, condition, question, rating_num) %>%
+  pivot_wider(
+    names_from = question,
+    values_from = rating_num
+  ) %>%
+  mutate(diff = Q1 - Q2) 
+
+```
+
+```{r}
+
+#lme first cause im lazy
+
+lme_Q1 <- lmer(Q1 ~ condition * type +
+                   (1 | ResponseId) +
+                   (1 | item),
+                    data = df_diff)
+
+summary(lme_Q1)
+```
+
+```{r}
+
+lme_Q2 <- lmer(Q2 ~ condition * type +
+                   (1 | ResponseId) +
+                   (1 | item),
+                    data = df_diff)
+
+summary(lme_Q2)
+```
+
+```{r}
+
+#bayesian ordinal model cause im paranoid
+
+fit_Q1 <- brm(Q1 ~ condition * type +
+                (1|ResponseId) +
+                (1|item),
+                data = df_diff,
+                family = cumulative())
+
+```
+
+```{r}
+
+saveRDS(fit_Q1, file = "~/fit_Q1.rds")
+summary(fit_Q1)
+
+```
+
+```{r}
+fit_Q2 <- brm(Q2 ~ condition * type +
+                (1|ResponseId) +
+                (1|item),
+                data = df_diff,
+                family = cumulative())
+```
+
+```{r}
+saveRDS(fit_Q1, file = "~/fit_Q2.rds")
+summary(fit_Q2)
+```
+
+```{r}
+#check deltas (stefano throws me in jail version)
+
+df_diff$diff_num = as.numeric(df_diff$diff)
+
+fit_delta_lme <- lmer(diff_num ~ condition * type +
+                   (1|ResponseId) +
+                   (1|item),
+                    data = df_diff)
+```
+
+```{r}
+summary(fit_delta_lme)
+```
+
+
+
+```{r}
+# check deltas (stefano does not throw me in jail version?)
+
+df2 <- df_diff %>%
+  pivot_longer(cols = c(Q1, Q2), names_to = "question", values_to = "rating") %>%
+  mutate(rating = ordered(rating), question = factor(question))
+
+fit_delta <- brm(
+  rating ~ condition * question * type + (1 | ResponseId) + (1 | item),
+  data = df2,
+  family = cumulative()
+)
+
+```
+
+```{r}
+
+saveRDS(fit_delta, file = "~/fit_delta.rds")
+summary(fit_delta)
+```
