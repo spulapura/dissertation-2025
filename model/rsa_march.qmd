@@ -85,8 +85,6 @@ print(figure1_plot)
 
 ```
 
-
-
 ```{r}
 #cached since the lookups were taking one century to run
 L0_matrix_null <- sapply(mu_vals, function(mu) lit_listener(mu, nu, "null")$Posterior)
@@ -109,7 +107,7 @@ $$
 
 $$
 \mathbb{U}_{S_1}(R; \theta, \mu) = \underbrace{\log P_{L_0}(O > \theta|R; \mu)}_{\textbf{-surprisal}} - \text{cost(R)}
-$$ 
+$$
 
 $$
 P_{S_1}(R|\theta, \mu) = \text{softmax}(\alpha \cdot \mathbb{U}_{S_1}(R; \theta, \mu))
@@ -168,13 +166,12 @@ ggplot(speaker_plot, aes(x = mu, y = Probability, color = Utterance)) +
   ) +
   ylim(0, 1)
 ```
+
 $$
 P_{L_1}(\theta, \mu|R) \propto P_{S_1}(R|\theta, \mu) \cdot P(\theta) \cdot P(\mu)
-$$
-$$
+$$ $$
 P_{L_1}(\mu|R) = \int_0^1  P_{L_1}(\theta, \mu|R) d\theta
-$$
-$$
+$$ $$
 P_{L_1}(O|R) \propto \int_0^1\underbrace{ P(R|O) \cdot P(O;\mu)}_{\textbf{Conditionalization from prior}}  \cdot \underbrace{P_{L_1}(\mu|R)}_{\textbf{Probability of that prior}} d\mu
 $$
 
@@ -195,7 +192,10 @@ L1_results <- lapply(sample_mu_vals, function(prior) {
   joint_long <- speaker_grid$prob_long * theta_probs * mu_probs
   
   marg_null <- as.numeric(rowsum(joint_null, speaker_grid$mu))
+  marg_null <- marg_null / sum(marg_null)
+  
   marg_long <- as.numeric(rowsum(joint_long, speaker_grid$mu))
+  marg_long <- marg_long / sum(marg_long)
 
   null_prob <- as.numeric(L0_matrix_null %*% marg_null)
   null_prob <- null_prob / sum(null_prob)
@@ -230,8 +230,7 @@ ggplot(plot_marginals, aes(x = mu_val, y = Prob, color = Distribution, fill=Dist
   scale_color_manual(values = c("null" = "gray30", "long" = "blue")) +
   scale_fill_manual(values = c("null" = "gray50", "long" = "blue")) +
   theme_bw() +
-  labs(title = "marginal P(mu|R)", x = "mu", y = "P(mu|R)") +
-  scale_x_continuous(breaks = seq(0, 1, by = 0.2))
+  labs(title = "marginal P(mu|R)", x = "mu", y = "P(mu|R)") 
 ```
 
 ```{r}
@@ -251,9 +250,6 @@ final_plot <- ggplot(posterior, aes(x = O, y = Prob, fill = Distribution, color 
   labs(title = "Posteriors for null vs long", x = "Opinion (O)", y = "P(O|R)")
 print(final_plot) 
 ```
-What I'd like to see (what I had in the original graphs, and what showed up in the experiment) is that the grey curve (null) should be similar to 
-L1's own prior. So for hyperprior 0.2, I'd expect something with a mean around 0.2. But that's clearly not what we're getting here... and I wonder if
-it is a reversal of the backfire effect, where low prior with no explanation triggers an inference that the speaker expected a HIGH prior-- in 
-the model at least. my instict is that would not be consistent with the data, but i need to think about it and i'm fading a little
 
+What I'd like to see (what I had in the original graphs, and what showed up in the experiment) is that the grey curve (null) should be similar to L1's own prior. So for hyperprior 0.2, I'd expect something with a mean around 0.2. But that's clearly not what we're getting here... and I wonder if it is a reversal of the backfire effect, where low prior with no explanation triggers an inference that the speaker expected a HIGH prior-- in the model at least. my instict is that would not be consistent with the data, but i need to think about it and i'm fading a little
 
