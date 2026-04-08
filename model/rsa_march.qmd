@@ -13,13 +13,13 @@ library(ggplot2)
 ```{r}
 O_vals <- seq(0.01, 0.99, length.out = 50) 
 mu_vals <- seq(0.05, 0.95, length.out = 50)
-theta_vals <- seq(0.5, 0.9, length.out = 50) #i feel like this range conceptually makes sense but might be creating issues with the model
-sample_mu_vals <- c(0.2, 0.5, 0.8)
+theta_vals <- seq(0.05, 0.9, length.out = 50) #i feel like this range conceptually makes sense but might be creating issues with the model
+sample_mu_vals <- c(0.25, 0.5, 0.75)
 
 #ive been fussing with these but i think the problem might just be the model design itself and not the tuning
 #and also just doing a hyperparameter sweep to find what gives the effect i want feels a bit fraudulent lol
-cost <- c(null = 0, long = 0.2) 
-alpha <- 10
+cost <- c(null = 0, long = 2) 
+alpha <- 5
 nu <- 6 #keeping this constant here for simplicity but a better version should infer both parameters
 ```
 
@@ -102,11 +102,11 @@ dim(speaker_grid)
 ```
 
 $$
-P_{L_0}(O > \theta| R; \mu) = \int_\theta^1 P_{L_0}(O|R; \mu)  dO
+P_{L_0^{\mu,\nu}}(O > \theta| R) = \int_\theta^1 P_{L_0^{\mu, \nu}}(O|R)  dO
 $$
 
 $$
-\mathbb{U}_{S_1}(R; \theta, \mu) = \underbrace{\log P_{L_0}(O > \theta|R; \mu)}_{\textbf{-surprisal}} - \text{cost(R)}
+\mathbb{U}_{S_1}(R; \theta, \mu, \nu) = \underbrace{\log P_{L_0^{\mu, \nu}}(O > \theta|R)}_{\textbf{-surprisal}} - \text{cost(R)}
 $$
 
 $$
@@ -181,7 +181,7 @@ prior_theta <- dnorm(theta_vals, mean = 0.7, sd = 0.2) #also tried this with a u
 prior_theta <- prior_theta / sum(prior_theta)
 
 L1_results <- lapply(sample_mu_vals, function(prior) {
-  current_p_mu <- dbeta(mu_vals, prior*2, (1-prior)*2) #likewise tried a bunch of diff hyperpriors including uniform
+  current_p_mu <- dbeta(mu_vals, prior*3, (1-prior)*3) #likewise tried a bunch of diff hyperpriors including uniform
   #so i can't really tell if it's just a hyperparameter tuning issue or something is fundamentally wrong with the logic of L1
   current_p_mu <- current_p_mu / sum(current_p_mu)
 
@@ -214,18 +214,22 @@ L1_results <- lapply(sample_mu_vals, function(prior) {
 
 posterior <- lapply(L1_results, function(x) x[["posterior"]]) %>% bind_rows()
 marginals <- lapply(L1_results, function(x) x[["marginals"]]) %>% bind_rows()
-```
 
-```{r}
 
 plot_marginals <- marginals %>%
   pivot_longer(cols = c("marg_null", "marg_long"), names_to = "Distribution", values_to = "Prob") %>%
   mutate(Distribution = recode(Distribution, marg_null = "null", marg_long = "long")) %>%
   mutate(Distribution = factor(Distribution, levels = c("null", "long")))
 
+marginal_means <- plot_marginals %>%
+  group_by(prior, Distribution) %>%
+  summarize(mean_mu = sum(mu_val * Prob))
+
 ggplot(plot_marginals, aes(x = mu_val, y = Prob, color = Distribution, fill=Distribution)) +
   geom_line(linewidth = 0.8) +
   geom_area(alpha = 0.3, position="identity") +
+   geom_vline(data = marginal_means, aes(xintercept = mean_mu, color = Distribution), 
+             linetype = "dashed", linewidth = 0.5) +
   facet_wrap(~prior, labeller = label_both, ncol = 1) +
   scale_color_manual(values = c("null" = "gray30", "long" = "blue")) +
   scale_fill_manual(values = c("null" = "gray50", "long" = "blue")) +
@@ -243,7 +247,7 @@ final_plot <- ggplot(posterior, aes(x = O, y = Prob, fill = Distribution, color 
   geom_line(linewidth = 0.8) +
   geom_vline(data = final_means, aes(xintercept = mean_O, color = Distribution), 
              linetype = "dashed", linewidth = 0.5) +
-  facet_wrap(~mu, labeller = label_both) +
+  facet_wrap(~mu, labeller = label_both, ncol=1) +
   scale_fill_manual(values = c("null" = "gray50", "long" = "blue")) +
   scale_color_manual(values = c("null" = "gray30", "long" = "blue")) +
   theme_bw() +
@@ -252,4 +256,3 @@ print(final_plot)
 ```
 
 What I'd like to see (what I had in the original graphs, and what showed up in the experiment) is that the grey curve (null) should be similar to L1's own prior. So for hyperprior 0.2, I'd expect something with a mean around 0.2. But that's clearly not what we're getting here... and I wonder if it is a reversal of the backfire effect, where low prior with no explanation triggers an inference that the speaker expected a HIGH prior-- in the model at least. my instict is that would not be consistent with the data, but i need to think about it and i'm fading a little
-

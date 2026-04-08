@@ -1,0 +1,312 @@
+---
+title: "rsa_april"
+format: html
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+V_vals <- seq(0.0001, 0.9999, length.out = 2000) 
+
+#grid of beta params
+mu_vals <- seq(0.06, 0.94, length.out = 12)
+nu_vals <- seq(1, 10, length.out = 10)
+
+sample_mu_vals <- c(0.25, 0.5, 0.75)
+
+#might make more conceptual sense to restrict these to higher values 
+#but probably belongs in the prior rather enforcing it here
+theta_vals <- seq(0.05, 0.95, length.out = 46)
+
+#chosen pretty arbitrarily, needs further optimization
+cost <- c(null = 0, long = 1) 
+alpha <- 2
+```
+
+Literal listener:
+
+$$
+P_{L_0^{\mu, \nu}}(O|R) \propto P(R|O)\cdot P(O) \\
+=  P(R|O)\cdot Beta(O, \mu \nu, (1-\mu)\nu)
+$$
+
+```{r}
+#convert from mean/sample size parameterization 
+#back to alpha/beta (so i can use dbeta)
+#again note that mu/nu are not inferred by L0
+#that's just the distribution that S1 is treating as his prior
+#L1 is inferring /which beta distribution/ S1 is treating as L0's prior 
+prior_L0 <- function(mu, nu) {
+  a <- mu*nu
+  b <- (1-mu) * nu
+  dbeta(V_vals, a, b)
+}
+
+#i picked the linear likelihood for simplicity
+#also tried quadratic to make the reasons have a bigger effect
+#i probably need to defend making the likelihood independent of the 
+#hyperparameters of the prior? 
+likelihood_L0 <- function(R) {
+  if(R == "null") rep(1, length(V_vals)) else V_vals^2
+}
+
+lit_listener <- function(mu, nu, R) {
+  prior <- prior_L0(mu,nu) 
+  prior <- prior / sum(prior)
+  likelihood <- likelihood_L0(R)
+  posterior <- (prior * likelihood) / sum(prior * likelihood)
+  data.frame(V = V_vals, 
+             Prior = prior, 
+             Posterior = posterior, 
+             mu = mu, 
+             nu=nu, 
+             R = R)
+}
+```
+
+```{r}
+
+L0_data <- lapply(mu_vals, function(m) 
+            lapply(nu_vals, function(n) lit_listener(m, n, "long"))) %>%
+            bind_rows() %>%
+            pivot_longer(cols = c("Prior", "Posterior"), names_to = "Distribution",values_to ="Prob")
+
+figure1_data <- L0_data  %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(mu, nu) %>%
+  summarise(post_mean = sum(V * Prob), .groups = "drop") %>%
+  mutate(delta_means = post_mean - mu)
+
+```
+
+```{r}
+
+ggplot(figure1_data, aes(x = mu, y = nu, fill = delta_means)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black"))+
+  labs(x = "mu", y = "nu", fill = "Delta") +
+  theme_minimal()
+
+```
+
+The general trend we observe here is that there's always a positive change from the prior to the posterior, but that tends to be magnified when the prior is weaker (low nu) or on average less favorable (low mu). For good measure, for fixed nu:
+
+```{r}
+
+figure2_data <- lapply(sample_mu_vals, function(m) lit_listener(m, 6, "long")) %>%
+            bind_rows() %>%
+            pivot_longer(cols = c("Prior", "Posterior"), names_to = "Distribution",values_to ="Prob")
+
+posterior_means <- figure2_data %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(mu) %>%
+  summarise(post_mean = sum(V * Prob))
+
+figure2_plot <- ggplot(figure2_data, aes(x = V, y = Prob, fill = Distribution, color = Distribution)) +
+  geom_area(alpha = 0.3, position = "identity") + 
+  geom_line(size = 0.8) +
+  geom_vline(aes(xintercept = mu), linetype = "dashed", color = "gray30", linewidth = 0.5)+ 
+  geom_vline(data = posterior_means, aes(xintercept = post_mean), linetype = "dashed", color = "blue", linewidth = 0.5)+
+  facet_wrap(~mu, labeller = label_both, ncol=1) +
+  scale_fill_manual(values = c("Prior" = "gray50", "Posterior" = "blue")) +
+  scale_color_manual(values = c("Prior" = "gray30", "Posterior" = "blue")) +
+  theme_bw() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))+
+  labs(title = "Bayesian update with no pragmatic reasoning", x = "Value", y = "P(V|R; mu)")
+
+print(figure2_plot)
+```
+
+```{r}
+#cached since the lookups were taking one century to run
+L0_array_null <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "null")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+L0_array_long <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "long")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+speaker_grid <- expand.grid(
+  theta_i = 1:length(theta_vals), 
+  mu_j = 1:length(mu_vals), 
+  nu_k = 1:length(nu_vals)
+)
+
+speaker_grid$theta <- theta_vals[speaker_grid$theta_i]
+speaker_grid$mu <- mu_vals[speaker_grid$mu_j]
+speaker_grid$nu <- nu_vals[speaker_grid$nu_k]
+```
+
+Pragmatic speaker
+
+$$
+P_{L_0^{\mu,\nu}}(O > \theta| R) = \int_\theta^1 P_{L_0^{\mu, \nu}}(O|R)  dO
+$$
+
+$$
+\mathbb{U}_{S_1}(R; \theta, \mu, \nu) = \underbrace{\log P_{L_0^{\mu, \nu}}(O > \theta|R)}_{\textbf{-surprisal}} - \text{cost(R)}
+$$
+
+$$
+P_{S_1}(R|\theta, \mu) = \text{softmax}(\alpha \cdot \mathbb{U}_{S_1}(R; \theta, \mu))
+$$
+
+```{r}
+
+s_probs <- mapply(function(i, j, k) {
+  
+  #integral
+  p_null <- sum(L0_array_null[V_vals > theta_vals[i], j, k])
+  p_long <- sum(L0_array_long[V_vals > theta_vals[i], j, k])
+  
+  #utility
+  util_null <- log(p_null + 1e-10) - cost["null"]
+  util_long <- log(p_long + 1e-10) - cost["long"]
+
+  #softmax
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+  
+  return(c(null_numer/denom, long_numer/denom))
+  
+}, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$nu_k)
+
+speaker_grid$prob_null <- s_probs[1, ]
+speaker_grid$prob_long <- s_probs[2, ]
+speaker_grid <- speaker_grid %>%
+  mutate(prob_diff = prob_null - prob_long)
+```
+
+```{r}
+
+speaker_plot <- speaker_grid %>%
+  filter(theta_i == 36) #corresponds to theta = 0.75
+
+ggplot(speaker_plot, aes(x = mu, y = nu, fill = prob_diff)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black")) +
+  labs(x = "mu", y = "nu", fill = "Delta") +
+  theme_minimal()
+  
+```
+
+Where the crossover happens will depend on the selection of the utterance cost and the softmax temperature but we see the general pattern that the null is preferred for higher values of mu
+
+Pragmatic listener
+
+```{r}
+
+# bypass the array entirely, call lit_listener directly
+test <- lit_listener(mu_vals[j_mid], nu_vals[k_mid], "null")
+plot(test$V, test$Posterior, type = "l", col = "blue")
+
+test_long <- lit_listener(mu_vals[j_mid], nu_vals[k_mid], "long")
+lines(test_long$V, test_long$Posterior, col = "red")
+```
+
+```{r}
+
+L0_array_null <- array(NA,
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+L0_array_long <- array(NA,
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+results_null <- mapply(function(m, n) lit_listener(m, n, "null")$Posterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
+results_long <- mapply(function(m, n) lit_listener(m, n, "long")$Posterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
+
+# results is now 50 x (46*20), fill into array
+for (k in seq_along(nu_vals)) {
+  for (j in seq_along(mu_vals)) {
+    idx <- (k - 1) * length(mu_vals) + j
+    L0_array_null[, j, k] <- results_null[, idx]
+    L0_array_long[, j, k] <- results_long[, idx]
+  }
+}
+```
+
+```{r}
+
+s_probs <- mapply(function(i, j, k) {
+  
+  #integral
+  p_null <- sum(L0_array_null[V_vals > theta_vals[i], j, k])
+  p_long <- sum(L0_array_long[V_vals > theta_vals[i], j, k])
+  
+  #utility
+  util_null <- log(p_null + 1e-10) - cost["null"]
+  util_long <- log(p_long + 1e-10) - cost["long"]
+
+  #softmax
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+  
+  return(c(null_numer/denom, long_numer/denom))
+  
+}, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$nu_k)
+
+speaker_grid$prob_null <- s_probs[1, ]
+speaker_grid$prob_long <- s_probs[2, ]
+speaker_grid <- speaker_grid %>%
+  mutate(prob_diff = prob_null - prob_long)
+
+```
+
+```{r}
+speaker_plot <- speaker_grid %>%
+  filter(theta_i == 36) #corresponds to theta = 0.75
+
+ggplot(speaker_plot, aes(x = mu, y = nu, fill = prob_diff)) +
+  geom_tile() +
+  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black")) +
+  labs(x = "mu", y = "nu", fill = "Delta") +
+  theme_minimal()
+```
+
+```{r}
+j_mid <- which.min(abs(mu_vals - 0.5))
+theta_test <- 36
+
+sapply(seq_along(nu_vals), function(k) {
+  p_null <- sum(L0_array_null[V_vals > theta_vals[theta_test], j_mid, k])
+  p_long <- sum(L0_array_long[V_vals > theta_vals[theta_test], j_mid, k])
+  c(nu = nu_vals[k], p_null = p_null, p_long = p_long, diff = p_long - p_null)
+}) %>% t()
+```
+
+```{r}
+
+sapply(seq_along(nu_vals), function(k) {
+  p_null <- sum(L0_array_null[V_vals > theta_vals[theta_test], j_mid, k])
+  p_long <- sum(L0_array_long[V_vals > theta_vals[theta_test], j_mid, k])
+  util_null <- log(p_null + 1e-10) - cost["null"]
+  util_long <- log(p_long + 1e-10) - cost["long"]
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+  c(nu = nu_vals[k], prob_long = long_numer/denom, prob_null = null_numer/denom)
+}) %>% t()
+```
