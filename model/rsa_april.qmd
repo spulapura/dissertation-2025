@@ -24,7 +24,7 @@ sample_mu_vals <- c(0.25, 0.5, 0.75)
 theta_vals <- seq(0.05, 0.95, length.out = 46)
 
 #chosen pretty arbitrarily, needs further optimization
-cost <- c(null = 0, long = 1) 
+cost <- c(null = 0, long = 0.2) 
 alpha <- 2
 ```
 
@@ -56,15 +56,17 @@ likelihood_L0 <- function(R) {
 }
 
 lit_listener <- function(mu, nu, R) {
-  prior <- prior_L0(mu,nu) 
+  prior <- prior_L0(mu, nu)
   prior <- prior / sum(prior)
   likelihood <- likelihood_L0(R)
-  posterior <- (prior * likelihood) / sum(prior * likelihood)
+  unnorm_posterior <- prior * likelihood
+  posterior <- unnorm_posterior / sum(unnorm_posterior)
   data.frame(V = V_vals, 
              Prior = prior, 
-             Posterior = posterior, 
+             Posterior = posterior,
+             UnnormPosterior = unnorm_posterior,
              mu = mu, 
-             nu=nu, 
+             nu = nu, 
              R = R)
 }
 ```
@@ -88,7 +90,7 @@ figure1_data <- L0_data  %>%
 
 ggplot(figure1_data, aes(x = mu, y = nu, fill = delta_means)) +
   geom_tile() +
-  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black"))+
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
   labs(x = "mu", y = "nu", fill = "Delta") +
   theme_minimal()
 
@@ -138,6 +140,32 @@ L0_array_long <- array(sapply(nu_vals, function(n)
   dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
 )
 
+L0_array_null_unnorm <- array(NA,
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+L0_array_long_unnorm <- array(NA,
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+results_null_unnorm <- mapply(function(m, n) lit_listener(m, n, "null")$UnnormPosterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
+results_long_unnorm <- mapply(function(m, n) lit_listener(m, n, "long")$UnnormPosterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
+
+for (k in seq_along(nu_vals)) {
+  for (j in seq_along(mu_vals)) {
+    idx <- (k - 1) * length(mu_vals) + j
+    L0_array_null_unnorm[, j, k] <- results_null_unnorm[, idx]
+    L0_array_long_unnorm[, j, k] <- results_long_unnorm[, idx]
+  }
+}
+
 speaker_grid <- expand.grid(
   theta_i = 1:length(theta_vals), 
   mu_j = 1:length(mu_vals), 
@@ -171,142 +199,209 @@ s_probs <- mapply(function(i, j, k) {
   p_null <- sum(L0_array_null[V_vals > theta_vals[i], j, k])
   p_long <- sum(L0_array_long[V_vals > theta_vals[i], j, k])
   
+  #informativity 
+  inf_null <- log(p_null + 1e-10)
+  inf_long <- log(p_long + 1e-10)
+  
   #utility
-  util_null <- log(p_null + 1e-10) - cost["null"]
-  util_long <- log(p_long + 1e-10) - cost["long"]
+  util_null <- inf_null - cost["null"]
+  util_long <- inf_long - cost["long"]
 
   #softmax
   null_numer <- exp(alpha * util_null)
   long_numer <- exp(alpha * util_long)
   denom <- null_numer + long_numer
   
-  return(c(null_numer/denom, long_numer/denom))
+  return(c(null_numer/denom, long_numer/denom, p_null, p_long, inf_null, inf_long))
   
 }, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$nu_k)
 
 speaker_grid$prob_null <- s_probs[1, ]
 speaker_grid$prob_long <- s_probs[2, ]
+speaker_grid$int_null <- s_probs[3, ]
+speaker_grid$int_long <- s_probs[4, ]
+speaker_grid$inf_null <- s_probs[5, ]
+speaker_grid$inf_long <- s_probs[6, ]
+
+
 speaker_grid <- speaker_grid %>%
-  mutate(prob_diff = prob_null - prob_long)
+  mutate(int_diff = int_long - int_null) %>%
+  mutate(inf_diff = inf_long - inf_null) %>%
+  mutate(prob_diff = prob_long - prob_null) %>%
+  filter(theta_i == 10)
 ```
 
 ```{r}
 
-speaker_plot <- speaker_grid %>%
-  filter(theta_i == 36) #corresponds to theta = 0.75
-
-ggplot(speaker_plot, aes(x = mu, y = nu, fill = prob_diff)) +
+ggplot(speaker_grid, aes(x = mu, y = nu, fill = int_diff)) +
   geom_tile() +
-  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black")) +
-  labs(x = "mu", y = "nu", fill = "Delta") +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(x = "mu", y = "nu", fill = "diff") +
   theme_minimal()
+
+
+ggplot(speaker_grid, aes(x = mu, y = nu, fill = prob_diff)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(x = "mu", y = "nu", fill = "diff") +
+  theme_minimal()
+
+```
+
+These results are generally as expected. the long utterance is preferred over the null for lower prior mean, and the null utterance is preferred for higher prior mean.
+
+Further, the long utterance survives for higher values of mu when nu is lower (weakly opinionated prior).
+
+```{r}
+
+prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2)
+prior_theta <- prior_theta / sum(prior_theta)
+
+prior_mu_uniform <- rep(1, length(mu_vals)) / length(mu_vals)
+prior_nu_uniform <- rep(1, length(nu_vals)) / length(nu_vals)
+
+mu_probs <- prior_mu_uniform[speaker_grid$mu_j]
+nu_probs <- prior_nu_uniform[speaker_grid$nu_k]
+theta_probs <- prior_theta[speaker_grid$theta_i]
+
+joint_null <- speaker_grid$prob_null * theta_probs * mu_probs * nu_probs
+joint_long <- speaker_grid$prob_long * theta_probs * mu_probs * nu_probs
+
+group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
+
+marg_null <- rowsum(joint_null, group_key)
+marg_long <- rowsum(joint_long, group_key)
+marg_null <- marg_null / sum(marg_null)
+marg_long <- marg_long / sum(marg_long)
+
+mu_nu_grid <- speaker_grid %>%
+  distinct(mu_j, nu_k, mu, nu) %>%
+  arrange(mu_j, nu_k) %>%
+  mutate(group_key = mu_j * 1000 + nu_k)
+
+null_prob <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
+  L0_array_null[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+}) %*% marg_null
+null_prob <- null_prob / sum(null_prob)
+
+long_prob <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
+  L0_array_long[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+}) %*% marg_long
+long_prob <- long_prob / sum(long_prob)
+
+L1_marginals <- data.frame(
+  mu = mu_nu_grid$mu,
+  nu = mu_nu_grid$nu,
+  marg_null = as.numeric(marg_null),
+  marg_long = as.numeric(marg_long)
+)
+
+L1_posterior <- rbind(
+  data.frame(V = V_vals, Prob = as.numeric(null_prob), Distribution = "null"),
+  data.frame(V = V_vals, Prob = as.numeric(long_prob), Distribution = "long")
+)
+```
+
+```{r}
+
+L1_marginals_plot <- L1_marginals %>%
+  mutate(marg_diff = marg_long - marg_null) 
+
+ggplot(L1_marginals_plot, aes(x = mu, y = nu, fill = marg_diff)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(x = "mu", y = "nu", fill = "diff") +
+  theme_minimal()
+
+```
+
+```{r}
+
+prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2)
+prior_theta <- prior_theta / sum(prior_theta)
+
+nu_scaled <- (nu_vals - min(nu_vals)) / (max(nu_vals) - min(nu_vals))
+nu_scaled <- pmax(pmin(nu_scaled, 0.999), 0.001)
+
+group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
+theta_probs <- prior_theta[speaker_grid$theta_i]
+
+mu_nu_grid <- speaker_grid %>%
+  distinct(mu_j, nu_k, mu, nu) %>%
+  arrange(mu_j, nu_k) %>%
+  mutate(group_key = mu_j * 1000 + nu_k)
+
+L0_null_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
+  L0_array_null_unnorm[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+})
+L0_long_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
+  L0_array_long_unnorm[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+})
+
+L1_function <- function(prior_mu, prior_nu) {
   
-```
-
-Where the crossover happens will depend on the selection of the utterance cost and the softmax temperature but we see the general pattern that the null is preferred for higher values of mu
-
-Pragmatic listener
-
-```{r}
-
-# bypass the array entirely, call lit_listener directly
-test <- lit_listener(mu_vals[j_mid], nu_vals[k_mid], "null")
-plot(test$V, test$Posterior, type = "l", col = "blue")
-
-test_long <- lit_listener(mu_vals[j_mid], nu_vals[k_mid], "long")
-lines(test_long$V, test_long$Posterior, col = "red")
-```
-
-```{r}
-
-L0_array_null <- array(NA,
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
-L0_array_long <- array(NA,
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
-
-results_null <- mapply(function(m, n) lit_listener(m, n, "null")$Posterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
-)
-results_long <- mapply(function(m, n) lit_listener(m, n, "long")$Posterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
-)
-
-# results is now 50 x (46*20), fill into array
-for (k in seq_along(nu_vals)) {
-  for (j in seq_along(mu_vals)) {
-    idx <- (k - 1) * length(mu_vals) + j
-    L0_array_null[, j, k] <- results_null[, idx]
-    L0_array_long[, j, k] <- results_long[, idx]
-  }
+  current_p_mu <- dbeta(mu_vals, prior_mu * 3, (1 - prior_mu) * 3)
+  current_p_mu <- current_p_mu / sum(current_p_mu)
+  
+  prior_nu_scaled <- (prior_nu - min(nu_vals)) / (max(nu_vals) - min(nu_vals))
+  prior_nu_scaled <- pmax(pmin(prior_nu_scaled, 0.999), 0.001)
+  current_p_nu <- dbeta(nu_scaled, prior_nu_scaled * 3, (1 - prior_nu_scaled) * 3)
+  current_p_nu <- current_p_nu / sum(current_p_nu)
+  
+  mu_probs <- current_p_mu[speaker_grid$mu_j]
+  nu_probs <- current_p_nu[speaker_grid$nu_k]
+  
+  joint_null <- speaker_grid$prob_null * theta_probs * mu_probs * nu_probs
+  joint_long <- speaker_grid$prob_long * theta_probs * mu_probs * nu_probs
+  
+  group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
+  
+  marg_null <- rowsum(joint_null, group_key)
+  marg_long <- rowsum(joint_long, group_key)
+  marg_null <- marg_null / sum(marg_null)
+  marg_long <- marg_long / sum(marg_long)
+  
+  marg_null <- marg_null[as.character(mu_nu_grid$group_key), , drop = FALSE]
+  marg_long <- marg_long[as.character(mu_nu_grid$group_key), , drop = FALSE]
+  
+  null_prob <- as.numeric(L0_null_mat %*% marg_null)
+  null_prob <- null_prob / sum(null_prob)
+  
+  long_prob <- as.numeric(L0_long_mat %*% marg_long)
+  long_prob <- long_prob / sum(long_prob)
+  
+  ev_null <- sum(V_vals * null_prob)
+  ev_long <- sum(V_vals * long_prob)
+  
+  data.frame(prior_mu = prior_mu, prior_nu = prior_nu, ev_diff = ev_long - ev_null)
 }
+
+L1_results <- do.call(rbind, lapply(mu_vals, function(pm)
+  do.call(rbind, lapply(nu_vals, function(pn)
+    L1_function(pm, pn)))))
 ```
 
 ```{r}
-
-s_probs <- mapply(function(i, j, k) {
-  
-  #integral
-  p_null <- sum(L0_array_null[V_vals > theta_vals[i], j, k])
-  p_long <- sum(L0_array_long[V_vals > theta_vals[i], j, k])
-  
-  #utility
-  util_null <- log(p_null + 1e-10) - cost["null"]
-  util_long <- log(p_long + 1e-10) - cost["long"]
-
-  #softmax
-  null_numer <- exp(alpha * util_null)
-  long_numer <- exp(alpha * util_long)
-  denom <- null_numer + long_numer
-  
-  return(c(null_numer/denom, long_numer/denom))
-  
-}, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$nu_k)
-
-speaker_grid$prob_null <- s_probs[1, ]
-speaker_grid$prob_long <- s_probs[2, ]
-speaker_grid <- speaker_grid %>%
-  mutate(prob_diff = prob_null - prob_long)
-
-```
-
-```{r}
-speaker_plot <- speaker_grid %>%
-  filter(theta_i == 36) #corresponds to theta = 0.75
-
-ggplot(speaker_plot, aes(x = mu, y = nu, fill = prob_diff)) +
+ggplot(L1_results, aes(x = prior_mu, y = prior_nu, fill = ev_diff)) +
   geom_tile() +
-  scale_fill_gradientn(colors = c("white", "#4393c3", "#2166ac", "#053061", "black")) +
-  labs(x = "mu", y = "nu", fill = "Delta") +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(x = "prior mu", y = "prior nu", fill = "E[V|long] - E[V|null]") +
   theme_minimal()
 ```
 
 ```{r}
-j_mid <- which.min(abs(mu_vals - 0.5))
-theta_test <- 36
-
-sapply(seq_along(nu_vals), function(k) {
-  p_null <- sum(L0_array_null[V_vals > theta_vals[theta_test], j_mid, k])
-  p_long <- sum(L0_array_long[V_vals > theta_vals[theta_test], j_mid, k])
-  c(nu = nu_vals[k], p_null = p_null, p_long = p_long, diff = p_long - p_null)
-}) %>% t()
+L1_results %>%
+  filter(prior_nu == nu_vals[10]) %>%
+  arrange(prior_mu) %>%
+  select(prior_mu, ev_diff)
 ```
 
 ```{r}
 
-sapply(seq_along(nu_vals), function(k) {
-  p_null <- sum(L0_array_null[V_vals > theta_vals[theta_test], j_mid, k])
-  p_long <- sum(L0_array_long[V_vals > theta_vals[theta_test], j_mid, k])
-  util_null <- log(p_null + 1e-10) - cost["null"]
-  util_long <- log(p_long + 1e-10) - cost["long"]
-  null_numer <- exp(alpha * util_null)
-  long_numer <- exp(alpha * util_long)
-  denom <- null_numer + long_numer
-  c(nu = nu_vals[k], prob_long = long_numer/denom, prob_null = null_numer/denom)
-}) %>% t()
+L1_results_check <- do.call(rbind, lapply(mu_vals, function(pm)
+  L1_function(pm, nu_vals[5])))  # fix prior_nu at middle value
+
+L1_results_check %>%
+  arrange(prior_mu) %>%
+  select(prior_mu, ev_diff)
 ```
