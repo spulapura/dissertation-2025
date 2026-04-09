@@ -20,7 +20,7 @@ nu_vals <- seq(1, 10, length.out = 10)
 sample_mu_vals <- c(0.25, 0.5, 0.75)
 
 #might make more conceptual sense to restrict these to higher values 
-#but probably belongs in the prior rather enforcing it here
+#but I think it belongs in the L1 prior rather enforcing it here
 theta_vals <- seq(0.05, 0.95, length.out = 46)
 
 #chosen pretty arbitrarily, needs further optimization
@@ -31,8 +31,8 @@ alpha <- 2
 Literal listener:
 
 $$
-P_{L_0^{\mu, \nu}}(O|R) \propto P(R|O)\cdot P(O) \\
-=  P(R|O)\cdot Beta(O, \mu \nu, (1-\mu)\nu)
+P_{L_0^{\mu, \nu}}(V|R) \propto P(R|V)\cdot P(V) \\
+=  P(R|V)\cdot Beta(V; \mu \nu, (1-\mu)\nu)
 $$
 
 ```{r}
@@ -88,15 +88,17 @@ figure1_data <- L0_data  %>%
 
 ```{r}
 
-ggplot(figure1_data, aes(x = mu, y = nu, fill = delta_means)) +
+figure1_data %>% ggplot(aes(x = mu, y = nu, fill = delta_means)) +
   geom_tile() +
   scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(x = "mu", y = "nu", fill = "Delta") +
+  labs(title = "Change in expected value from null (0R) to long (4R) explanation", x = "Prior mu", y = "Prior nu", fill = "Delta") +
   theme_minimal()
 
 ```
 
-The general trend we observe here is that there's always a positive change from the prior to the posterior, but that tends to be magnified when the prior is weaker (low nu) or on average less favorable (low mu). For good measure, for fixed nu:
+The general trend we observe here is that there's always a positive change from the prior to the posterior, and that tends to be magnified when the prior is less favorable on average (low mu) or less confident (low nu). Since the null utterance reproduces the prior, and the long utterance conditions on the evidence, the long utterance always does better than the null utterance for L0.
+
+For good measure, for fixed nu:
 
 ```{r}
 
@@ -118,37 +120,27 @@ figure2_plot <- ggplot(figure2_data, aes(x = V, y = Prob, fill = Distribution, c
   scale_fill_manual(values = c("Prior" = "gray50", "Posterior" = "blue")) +
   scale_color_manual(values = c("Prior" = "gray30", "Posterior" = "blue")) +
   theme_bw() +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))+
-  labs(title = "Bayesian update with no pragmatic reasoning", x = "Value", y = "P(V|R; mu)")
+  labs(title = "Bayesian update with no pragmatic reasoning", x = "Value", y = "P(V|long-4R; mu, nu)")
 
 print(figure2_plot)
 ```
 
+Here also we can see that the distribution always shifts to the right for the long explanation compared to the prior (no explanation), but the shift is less when the prior is already high.
+
 ```{r}
-#cached since the lookups were taking one century to run
-L0_array_null <- array(sapply(nu_vals, function(n)
-                        sapply(mu_vals, function(m)
-                        lit_listener(m, n, "null")$Posterior)),
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
 
-L0_array_long <- array(sapply(nu_vals, function(n)
-                        sapply(mu_vals, function(m)
-                        lit_listener(m, n, "long")$Posterior)),
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
 
-L0_array_null_unnorm <- array(NA,
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
-L0_array_long_unnorm <- array(NA,
-  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
-  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
-)
+```
 
+```{r}
+results_null <- mapply(function(m, n) lit_listener(m, n, "null")$Posterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
+results_long <- mapply(function(m, n) lit_listener(m, n, "long")$Posterior,
+  rep(mu_vals, times = length(nu_vals)),
+  rep(nu_vals, each = length(mu_vals))
+)
 results_null_unnorm <- mapply(function(m, n) lit_listener(m, n, "null")$UnnormPosterior,
   rep(mu_vals, times = length(nu_vals)),
   rep(nu_vals, each = length(mu_vals))
@@ -158,9 +150,16 @@ results_long_unnorm <- mapply(function(m, n) lit_listener(m, n, "long")$UnnormPo
   rep(nu_vals, each = length(mu_vals))
 )
 
+L0_array_null <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
+L0_array_long <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
+L0_array_null_unnorm <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
+L0_array_long_unnorm <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
+
 for (k in seq_along(nu_vals)) {
   for (j in seq_along(mu_vals)) {
     idx <- (k - 1) * length(mu_vals) + j
+    L0_array_null[, j, k] <- results_null[, idx]
+    L0_array_long[, j, k] <- results_long[, idx]
     L0_array_null_unnorm[, j, k] <- results_null_unnorm[, idx]
     L0_array_long_unnorm[, j, k] <- results_long_unnorm[, idx]
   }
@@ -315,6 +314,10 @@ ggplot(L1_marginals_plot, aes(x = mu, y = nu, fill = marg_diff)) +
 
 ```
 
+This is also generally as expected. we see more mass on the long utterance vs the null (diff is high/blue) for lower values of mu, and less mass on the long utterance vs
+
+the null (diff is low/red) for higher values of mu. again, long survives for higher values of mu when nu is lower (weakly opinionated prior)
+
 ```{r}
 
 prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2)
@@ -332,10 +335,10 @@ mu_nu_grid <- speaker_grid %>%
   mutate(group_key = mu_j * 1000 + nu_k)
 
 L0_null_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_null_unnorm[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+  L0_array_null[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
 })
 L0_long_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_long_unnorm[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
+  L0_array_long[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
 })
 
 L1_function <- function(prior_mu, prior_nu) {
@@ -351,11 +354,11 @@ L1_function <- function(prior_mu, prior_nu) {
   mu_probs <- current_p_mu[speaker_grid$mu_j]
   nu_probs <- current_p_nu[speaker_grid$nu_k]
   
+   # 1. compute joints — these retain relative scaling between null and long
   joint_null <- speaker_grid$prob_null * theta_probs * mu_probs * nu_probs
   joint_long <- speaker_grid$prob_long * theta_probs * mu_probs * nu_probs
   
-  group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
-  
+  # marg_null and marg_long: normalize separately (they are P(mu,nu|R) for each R)
   marg_null <- rowsum(joint_null, group_key)
   marg_long <- rowsum(joint_long, group_key)
   marg_null <- marg_null / sum(marg_null)
@@ -364,10 +367,12 @@ L1_function <- function(prior_mu, prior_nu) {
   marg_null <- marg_null[as.character(mu_nu_grid$group_key), , drop = FALSE]
   marg_long <- marg_long[as.character(mu_nu_grid$group_key), , drop = FALSE]
   
+  # use unnormalized L0 as P(R|V) * P(V; mu, nu)
   null_prob <- as.numeric(L0_null_mat %*% marg_null)
-  null_prob <- null_prob / sum(null_prob)
-  
   long_prob <- as.numeric(L0_long_mat %*% marg_long)
+  
+  # normalize each separately at the end — the proportionality in the equation
+  null_prob <- null_prob / sum(null_prob)
   long_prob <- long_prob / sum(long_prob)
   
   ev_null <- sum(V_vals * null_prob)
@@ -398,10 +403,10 @@ L1_results %>%
 
 ```{r}
 
-L1_results_check <- do.call(rbind, lapply(mu_vals, function(pm)
-  L1_function(pm, nu_vals[5])))  # fix prior_nu at middle value
+sum(L0_null_mat)
+sum(L0_long_mat)
+```
 
-L1_results_check %>%
-  arrange(prior_mu) %>%
-  select(prior_mu, ev_diff)
+```{r}
+
 ```

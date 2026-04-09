@@ -48,11 +48,18 @@ $$
 ```{r}
 #calculating the above equation
 lit_listener <- function(mu, nu, R) {
-  prior <- prior_L0(mu,nu) 
+  prior <- prior_L0(mu, nu)
   prior <- prior / sum(prior)
   likelihood <- likelihood_L0(R)
-  posterior <- (prior * likelihood) / sum(prior * likelihood)
-  data.frame(O = O_vals, Prior = prior, Posterior = posterior, mu = mu, R = R)
+  unnorm_posterior <- prior * likelihood
+  posterior <- unnorm_posterior / sum(unnorm_posterior)
+  data.frame(V = V_vals, 
+             Prior = prior, 
+             Posterior = posterior,
+             UnnormPosterior = unnorm_posterior,
+             mu = mu, 
+             nu = nu, 
+             R = R)
 }
 ```
 
@@ -168,11 +175,11 @@ ggplot(speaker_plot, aes(x = mu, y = Probability, color = Utterance)) +
 ```
 
 $$
-P_{L_1}(\theta, \mu|R) \propto P_{S_1}(R|\theta, \mu) \cdot P(\theta) \cdot P(\mu)
+P_{L_1}(\theta, \mu, \nu|R) \propto P_{S_1}(R|\theta, \mu, \nu) \cdot P(\theta) \cdot P(\mu) \cdot P(\nu)
 $$ $$
-P_{L_1}(\mu|R) = \int_0^1  P_{L_1}(\theta, \mu|R) d\theta
+P_{L_1}(\mu, \nu|R) = \int_0^1  P_{L_1}(\theta, \mu, \nu|R) d\theta
 $$ $$
-P_{L_1}(O|R) \propto \int_0^1\underbrace{ P(R|O) \cdot P(O;\mu)}_{\textbf{Conditionalization from prior}}  \cdot \underbrace{P_{L_1}(\mu|R)}_{\textbf{Probability of that prior}} d\mu
+P_{L_1}(V|R) \propto \int_0^{\nu_{max}}\int_0^1\underbrace{ P(R|V) \cdot P(V;\mu, \nu)}_{\textbf{Conditionalization from prior}}  \cdot \underbrace{P_{L_1}(\mu, \nu|R)}_{\textbf{Probability of that prior}} d\mu \cdot d\nu
 $$
 
 ```{r}
