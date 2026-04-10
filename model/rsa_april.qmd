@@ -14,17 +14,16 @@ library(ggplot2)
 V_vals <- seq(0.0001, 0.9999, length.out = 2000) 
 
 #grid of beta params
-mu_vals <- seq(0.06, 0.94, length.out = 12)
+mu_vals <- seq(0.01, 0.99, length.out = 20)
 nu_vals <- seq(1, 10, length.out = 10)
 
 sample_mu_vals <- c(0.25, 0.5, 0.75)
 
-#might make more conceptual sense to restrict these to higher values 
-#but I think it belongs in the L1 prior rather enforcing it here
+
 theta_vals <- seq(0.05, 0.95, length.out = 46)
 
-#chosen pretty arbitrarily, needs further optimization
-cost <- c(null = 0, long = 0.2) 
+
+cost <- c(null = 0, long = 0.5) 
 alpha <- 2
 ```
 
@@ -36,21 +35,12 @@ P_{L_0^{\mu, \nu}}(V|R) \propto P(R|V)\cdot P(V) \\
 $$
 
 ```{r}
-#convert from mean/sample size parameterization 
-#back to alpha/beta (so i can use dbeta)
-#again note that mu/nu are not inferred by L0
-#that's just the distribution that S1 is treating as his prior
-#L1 is inferring /which beta distribution/ S1 is treating as L0's prior 
 prior_L0 <- function(mu, nu) {
   a <- mu*nu
   b <- (1-mu) * nu
   dbeta(V_vals, a, b)
 }
 
-#i picked the linear likelihood for simplicity
-#also tried quadratic to make the reasons have a bigger effect
-#i probably need to defend making the likelihood independent of the 
-#hyperparameters of the prior? 
 likelihood_L0 <- function(R) {
   if(R == "null") rep(1, length(V_vals)) else V_vals^2
 }
@@ -91,7 +81,7 @@ figure1_data <- L0_data  %>%
 figure1_data %>% ggplot(aes(x = mu, y = nu, fill = delta_means)) +
   geom_tile() +
   scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(title = "Change in expected value from null (0R) to long (4R) explanation", x = "Prior mu", y = "Prior nu", fill = "Delta") +
+  labs(title = "Change in L0 expected opinion (V) after long explanation (4R)", x = "Prior mu", y = "Prior nu", fill = "Delta") +
   theme_minimal()
 
 ```
@@ -129,57 +119,52 @@ Here also we can see that the distribution always shifts to the right for the lo
 
 ```{r}
 
-
-```
-
-```{r}
-results_null <- mapply(function(m, n) lit_listener(m, n, "null")$Posterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
-)
-results_long <- mapply(function(m, n) lit_listener(m, n, "long")$Posterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
-)
-results_null_unnorm <- mapply(function(m, n) lit_listener(m, n, "null")$UnnormPosterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
-)
-results_long_unnorm <- mapply(function(m, n) lit_listener(m, n, "long")$UnnormPosterior,
-  rep(mu_vals, times = length(nu_vals)),
-  rep(nu_vals, each = length(mu_vals))
+#cached the lookups, otherwise takes forever to run 
+L0_array_null <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "null")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
 )
 
-L0_array_null <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
-L0_array_long <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
-L0_array_null_unnorm <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
-L0_array_long_unnorm <- array(NA, dim = c(length(V_vals), length(mu_vals), length(nu_vals)))
+L0_array_long <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "long")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
 
-for (k in seq_along(nu_vals)) {
-  for (j in seq_along(mu_vals)) {
-    idx <- (k - 1) * length(mu_vals) + j
-    L0_array_null[, j, k] <- results_null[, idx]
-    L0_array_long[, j, k] <- results_long[, idx]
-    L0_array_null_unnorm[, j, k] <- results_null_unnorm[, idx]
-    L0_array_long_unnorm[, j, k] <- results_long_unnorm[, idx]
-  }
-}
 
-speaker_grid <- expand.grid(
+#not needed for speaker but needed for L1 update maybe?
+L0_unnorm_null <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "null")$UnnormPosterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+L0_unnorm_long <- array(sapply(nu_vals, function(n)
+                        sapply(mu_vals, function(m)
+                        lit_listener(m, n, "long")$UnnormPosterior)),
+  dim = c(length(V_vals), length(mu_vals), length(nu_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, nu = nu_vals)
+)
+
+mu_nu_theta_grid <- expand.grid(
   theta_i = 1:length(theta_vals), 
   mu_j = 1:length(mu_vals), 
   nu_k = 1:length(nu_vals)
 )
 
-speaker_grid$theta <- theta_vals[speaker_grid$theta_i]
-speaker_grid$mu <- mu_vals[speaker_grid$mu_j]
-speaker_grid$nu <- nu_vals[speaker_grid$nu_k]
+mu_nu_theta_grid$theta <- theta_vals[mu_nu_theta_grid$theta_i]
+mu_nu_theta_grid$mu <- mu_vals[mu_nu_theta_grid$mu_j]
+mu_nu_theta_grid$nu <- nu_vals[mu_nu_theta_grid$nu_k]
 ```
 
 Pragmatic speaker
 
 $$
-P_{L_0^{\mu,\nu}}(O > \theta| R) = \int_\theta^1 P_{L_0^{\mu, \nu}}(O|R)  dO
+P_{L_0^{\mu,\nu}}(V > \theta| R) = \int_\theta^1 P_{L_0^{\mu, \nu}}(V|R)  dV
 $$
 
 $$
@@ -187,7 +172,7 @@ $$
 $$
 
 $$
-P_{S_1}(R|\theta, \mu) = \text{softmax}(\alpha \cdot \mathbb{U}_{S_1}(R; \theta, \mu))
+P_{S_1}(R|\theta, \mu, \nu) = \text{softmax}(\alpha \cdot \mathbb{U}_{S_1}(R; \theta, \mu))
 $$
 
 ```{r}
@@ -213,200 +198,177 @@ s_probs <- mapply(function(i, j, k) {
   
   return(c(null_numer/denom, long_numer/denom, p_null, p_long, inf_null, inf_long))
   
-}, speaker_grid$theta_i, speaker_grid$mu_j, speaker_grid$nu_k)
+}, mu_nu_theta_grid$theta_i, mu_nu_theta_grid$mu_j, mu_nu_theta_grid$nu_k)
 
-speaker_grid$prob_null <- s_probs[1, ]
-speaker_grid$prob_long <- s_probs[2, ]
-speaker_grid$int_null <- s_probs[3, ]
-speaker_grid$int_long <- s_probs[4, ]
-speaker_grid$inf_null <- s_probs[5, ]
-speaker_grid$inf_long <- s_probs[6, ]
+mu_nu_theta_grid$prob_null <- s_probs[1, ]
+mu_nu_theta_grid$prob_long <- s_probs[2, ]
+mu_nu_theta_grid$int_null <- s_probs[3, ]
+mu_nu_theta_grid$int_long <- s_probs[4, ]
+mu_nu_theta_grid$inf_null <- s_probs[5, ]
+mu_nu_theta_grid$inf_long <- s_probs[6, ]
 
 
-speaker_grid <- speaker_grid %>%
+
+```
+
+```{r}
+speaker_plot <- mu_nu_theta_grid %>%
   mutate(int_diff = int_long - int_null) %>%
   mutate(inf_diff = inf_long - inf_null) %>%
   mutate(prob_diff = prob_long - prob_null) %>%
   filter(theta_i == 10)
-```
 
-```{r}
-
-ggplot(speaker_grid, aes(x = mu, y = nu, fill = int_diff)) +
-  geom_tile() +
-  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(x = "mu", y = "nu", fill = "diff") +
-  theme_minimal()
-
-
-ggplot(speaker_grid, aes(x = mu, y = nu, fill = prob_diff)) +
-  geom_tile() +
-  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(x = "mu", y = "nu", fill = "diff") +
-  theme_minimal()
+  ggplot(speaker_plot, aes(x = mu, y = nu, fill = prob_diff)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0, 
+      breaks = c(min(mu_nu_theta_grid$prob_diff), 0, max(mu_nu_theta_grid$prob_diff)),
+      labels = c("Prefers null (0R)", "", "Prefers long (4R)")) +
+    labs(title = "Pragmatic speaker utterance preference", subtitle = "P(long|theta, mu, nu) - P(null| theta, mu, nu)",  x = "mu", y = "nu", fill = "") +
+    theme_minimal()
 
 ```
 
-These results are generally as expected. the long utterance is preferred over the null for lower prior mean, and the null utterance is preferred for higher prior mean.
+These results are as expected. The speaker prefers the long explanation for lower values of prior mu, and the null explanation for higher value of prior mu.
 
-Further, the long utterance survives for higher values of mu when nu is lower (weakly opinionated prior).
+Further, the long explanation survives for higher values of prior mu when prior nu is lower (weakly opinionated prior).
 
 ```{r}
 
-prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2)
-prior_theta <- prior_theta / sum(prior_theta)
+prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2) 
+prior_theta <- prior_theta / sum(prior_theta) 
 
-prior_mu_uniform <- rep(1, length(mu_vals)) / length(mu_vals)
-prior_nu_uniform <- rep(1, length(nu_vals)) / length(nu_vals)
+mean_mu = 0.2
+mean_nu = 2
+k = 1
+  
+hyperprior_mu <- dbeta(mu_vals, mean_mu * 3, (1 - mean_mu) * 3)
+hyperprior_mu <- hyperprior_mu / sum(hyperprior_mu)
 
-mu_probs <- prior_mu_uniform[speaker_grid$mu_j]
-nu_probs <- prior_nu_uniform[speaker_grid$nu_k]
-theta_probs <- prior_theta[speaker_grid$theta_i]
+hyperprior_nu <- dgamma(nu_vals, shape = mean_nu * k, rate = k) 
+hyperprior_nu <- hyperprior_nu / sum(hyperprior_nu)
 
-joint_null <- speaker_grid$prob_null * theta_probs * mu_probs * nu_probs
-joint_long <- speaker_grid$prob_long * theta_probs * mu_probs * nu_probs
+#priors p(mu), p(nu), p(theta) for each mu,nu,theta combination 
+p_mu <- hyperprior_mu[mu_nu_theta_grid$mu_j]
+p_nu <- hyperprior_nu[mu_nu_theta_grid$nu_k]
+p_theta <- prior_theta[mu_nu_theta_grid$theta_i]
 
-group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
+#joint probability of each mu,nu,theta combination
+joint_null_unnorm <- mu_nu_theta_grid$prob_null * p_mu * p_nu * p_theta
+joint_long_unnorm <- mu_nu_theta_grid$prob_long * p_mu * p_nu * p_theta
 
-marg_null <- rowsum(joint_null, group_key)
-marg_long <- rowsum(joint_long, group_key)
-marg_null <- marg_null / sum(marg_null)
-marg_long <- marg_long / sum(marg_long)
+mu_nu_theta_grid$joint_null <- joint_null_unnorm / sum(joint_null_unnorm)
+mu_nu_theta_grid$joint_long <- joint_long_unnorm / sum(joint_long_unnorm)
 
-mu_nu_grid <- speaker_grid %>%
-  distinct(mu_j, nu_k, mu, nu) %>%
-  arrange(mu_j, nu_k) %>%
-  mutate(group_key = mu_j * 1000 + nu_k)
+#marginalize out theta to get L1 probs of possible (mu,nu) pairs given utterance
+marginals <- mu_nu_theta_grid %>%
+  group_by(mu_j, nu_k) %>%
+  summarize(marg_null = sum(joint_null), marg_long = sum(joint_long), .groups = "drop")
 
-null_prob <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_null[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
-}) %*% marg_null
-null_prob <- null_prob / sum(null_prob)
+mu_nu_theta_grid <- mu_nu_theta_grid %>%
+  group_by(mu_j, nu_k) %>%
+  mutate(marg_null = sum(joint_null), marg_long = sum(joint_long)) %>%
+  ungroup()
 
-long_prob <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_long[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
-}) %*% marg_long
-long_prob <- long_prob / sum(long_prob)
+```
 
-L1_marginals <- data.frame(
-  mu = mu_nu_grid$mu,
-  nu = mu_nu_grid$nu,
-  marg_null = as.numeric(marg_null),
-  marg_long = as.numeric(marg_long)
+```{r}
+ggplot(mu_nu_theta_grid, aes(x = mu, y = nu, fill = marg_null)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+    labs(title = "L1 infers prior (mu, nu) from null explanation", x = "mu", y = "nu", fill = "") +
+    theme_minimal()
+
+ggplot(mu_nu_theta_grid, aes(x = mu, y = nu, fill = marg_long)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+    labs(title = "L1 infers prior (mu, nu) from long explanation",  x = "mu", y = "nu", fill = "") +
+    theme_minimal()
+  
+```
+
+Some of this makes sense– when the pragmatic listener hears the long explanation, he tends to guess lower values of mu, and when he hears the null explanation, he tends to guess higher values of mu (this is the RQ1 effect– participants say the speaker expected the listener to have an less favorable rating in the long condition vs the null). We also see some influence of the prior here– he tends not to guess the more extreme values of mu/nu.
+
+However, I don't think the effect is moderated by nu based on plotting? which doesn't fit my predictions and i dont understand how the final plot is basically working without that?
+
+```{r}
+
+#see how different combinations of the hyperpriors affect the inference
+hyperparams <- expand.grid(mean_mu = mu_vals, mean_nu = nu_vals)
+
+#lot of copied code i'll edit it down later
+L1_probs <- mapply(function (mean_mu, mean_nu) {
+  
+  hyperprior_mu <- dbeta(mu_vals, mean_mu * 5, (1 - mean_mu) * 5)
+  hyperprior_mu <- hyperprior_mu / sum(hyperprior_mu)
+  
+  hyperprior_nu <- dgamma(nu_vals, shape = mean_nu * k, rate = k) 
+  hyperprior_nu <- hyperprior_nu / sum(hyperprior_nu)
+  
+  #priors p(mu), p(nu), p(theta) for each mu,nu,theta combination 
+  p_mu <- hyperprior_mu[mu_nu_theta_grid$mu_j]
+  p_nu <- hyperprior_nu[mu_nu_theta_grid$nu_k]
+  p_theta <- prior_theta[mu_nu_theta_grid$theta_i]
+  
+  #joint probability of each mu,nu,theta combination
+  joint_null_unnorm <- mu_nu_theta_grid$prob_null * p_mu * p_nu * p_theta
+  joint_long_unnorm <- mu_nu_theta_grid$prob_long * p_mu * p_nu * p_theta
+  
+  mu_nu_theta_grid$joint_null <- joint_null_unnorm / sum(joint_null_unnorm)
+  mu_nu_theta_grid$joint_long <- joint_long_unnorm / sum(joint_long_unnorm)
+  
+  #marginalize out theta to get L1 probs of possible mu nu pairs given utterance
+  marginals <- mu_nu_theta_grid %>%
+    group_by(mu_j, nu_k) %>%
+    summarize(marg_null = sum(joint_null), marg_long = sum(joint_long), .groups = "drop")
+  
+  marginals <- marginals %>% arrange(nu_k, mu_j)
+  
+  #get the distributions for V for each utterance 
+  #weighing L0 standard bayes theorem output assuming a given pair of mu, nu
+  #by the marginal of that mu, nu pair
+  L0_null_mat <- matrix(L0_array_null, nrow = length(V_vals)) 
+  L0_long_mat <- matrix(L0_array_long, nrow = length(V_vals))
+  p_V_null <- L0_null_mat %*% marginals$marg_null
+  p_V_long <- L0_long_mat %*% marginals$marg_long
+
+  #get the expected value of each 
+  c(EV_null = sum(V_vals * p_V_null),
+    EV_long = sum(V_vals * p_V_long))
+  
+}, hyperparams$mean_mu, hyperparams$mean_nu)
+
+EV_df <- data.frame(
+  mu = hyperparams$mean_mu,
+  nu = hyperparams$mean_nu,
+  EV_null = L1_probs["EV_null", ],
+  EV_long = L1_probs["EV_long", ]
 )
 
-L1_posterior <- rbind(
-  data.frame(V = V_vals, Prob = as.numeric(null_prob), Distribution = "null"),
-  data.frame(V = V_vals, Prob = as.numeric(long_prob), Distribution = "long")
-)
 ```
 
 ```{r}
 
-L1_marginals_plot <- L1_marginals %>%
-  mutate(marg_diff = marg_long - marg_null) 
+ev_plot <- EV_df %>%
+  mutate(EV_diff = EV_long - EV_null)
 
-ggplot(L1_marginals_plot, aes(x = mu, y = nu, fill = marg_diff)) +
+ggplot(ev_plot, aes(x = mu, y = nu, fill = EV_diff)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+    labs(title = "L1 expected value diff",  x = "mu", y = "nu", fill = "") +
+    theme_minimal()
+
+```
+
+```{r}
+
+ev_plot %>%
+  pivot_longer(c(EV_null, EV_long), names_to = "utterance", values_to = "EV") %>%
+  mutate(utterance = recode(utterance, EV_null = "Null", EV_long = "Long")) %>%
+  ggplot(aes(x = mu, y = nu, fill = EV)) +
   geom_tile() +
-  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(x = "mu", y = "nu", fill = "diff") +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0.5) +
+  facet_wrap(~ utterance) +
+  labs(title = "L1 expected value by utterance", x = "mu", y = "nu", fill = "") +
   theme_minimal()
-
-```
-
-This is also generally as expected. we see more mass on the long utterance vs the null (diff is high/blue) for lower values of mu, and less mass on the long utterance vs
-
-the null (diff is low/red) for higher values of mu. again, long survives for higher values of mu when nu is lower (weakly opinionated prior)
-
-```{r}
-
-prior_theta <- dnorm(theta_vals, mean = 0.5, sd = 0.2)
-prior_theta <- prior_theta / sum(prior_theta)
-
-nu_scaled <- (nu_vals - min(nu_vals)) / (max(nu_vals) - min(nu_vals))
-nu_scaled <- pmax(pmin(nu_scaled, 0.999), 0.001)
-
-group_key <- speaker_grid$mu_j * 1000 + speaker_grid$nu_k
-theta_probs <- prior_theta[speaker_grid$theta_i]
-
-mu_nu_grid <- speaker_grid %>%
-  distinct(mu_j, nu_k, mu, nu) %>%
-  arrange(mu_j, nu_k) %>%
-  mutate(group_key = mu_j * 1000 + nu_k)
-
-L0_null_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_null[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
-})
-L0_long_mat <- sapply(seq_len(nrow(mu_nu_grid)), function(idx) {
-  L0_array_long[, mu_nu_grid$mu_j[idx], mu_nu_grid$nu_k[idx]]
-})
-
-L1_function <- function(prior_mu, prior_nu) {
-  
-  current_p_mu <- dbeta(mu_vals, prior_mu * 3, (1 - prior_mu) * 3)
-  current_p_mu <- current_p_mu / sum(current_p_mu)
-  
-  prior_nu_scaled <- (prior_nu - min(nu_vals)) / (max(nu_vals) - min(nu_vals))
-  prior_nu_scaled <- pmax(pmin(prior_nu_scaled, 0.999), 0.001)
-  current_p_nu <- dbeta(nu_scaled, prior_nu_scaled * 3, (1 - prior_nu_scaled) * 3)
-  current_p_nu <- current_p_nu / sum(current_p_nu)
-  
-  mu_probs <- current_p_mu[speaker_grid$mu_j]
-  nu_probs <- current_p_nu[speaker_grid$nu_k]
-  
-   # 1. compute joints — these retain relative scaling between null and long
-  joint_null <- speaker_grid$prob_null * theta_probs * mu_probs * nu_probs
-  joint_long <- speaker_grid$prob_long * theta_probs * mu_probs * nu_probs
-  
-  # marg_null and marg_long: normalize separately (they are P(mu,nu|R) for each R)
-  marg_null <- rowsum(joint_null, group_key)
-  marg_long <- rowsum(joint_long, group_key)
-  marg_null <- marg_null / sum(marg_null)
-  marg_long <- marg_long / sum(marg_long)
-  
-  marg_null <- marg_null[as.character(mu_nu_grid$group_key), , drop = FALSE]
-  marg_long <- marg_long[as.character(mu_nu_grid$group_key), , drop = FALSE]
-  
-  # use unnormalized L0 as P(R|V) * P(V; mu, nu)
-  null_prob <- as.numeric(L0_null_mat %*% marg_null)
-  long_prob <- as.numeric(L0_long_mat %*% marg_long)
-  
-  # normalize each separately at the end — the proportionality in the equation
-  null_prob <- null_prob / sum(null_prob)
-  long_prob <- long_prob / sum(long_prob)
-  
-  ev_null <- sum(V_vals * null_prob)
-  ev_long <- sum(V_vals * long_prob)
-  
-  data.frame(prior_mu = prior_mu, prior_nu = prior_nu, ev_diff = ev_long - ev_null)
-}
-
-L1_results <- do.call(rbind, lapply(mu_vals, function(pm)
-  do.call(rbind, lapply(nu_vals, function(pn)
-    L1_function(pm, pn)))))
-```
-
-```{r}
-ggplot(L1_results, aes(x = prior_mu, y = prior_nu, fill = ev_diff)) +
-  geom_tile() +
-  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
-  labs(x = "prior mu", y = "prior nu", fill = "E[V|long] - E[V|null]") +
-  theme_minimal()
-```
-
-```{r}
-L1_results %>%
-  filter(prior_nu == nu_vals[10]) %>%
-  arrange(prior_mu) %>%
-  select(prior_mu, ev_diff)
-```
-
-```{r}
-
-sum(L0_null_mat)
-sum(L0_long_mat)
-```
-
-```{r}
 
 ```
