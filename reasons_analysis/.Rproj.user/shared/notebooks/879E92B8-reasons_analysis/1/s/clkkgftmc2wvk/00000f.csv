@@ -1,3 +1,0 @@
-"0",""
-"0","ev_posterior <- readRDS(""~/Desktop/evidential_posterior.rds"")"
-"0","ev_posterior$rating <- findInterval(ev_posterior$Prob, thresholds) + 1"

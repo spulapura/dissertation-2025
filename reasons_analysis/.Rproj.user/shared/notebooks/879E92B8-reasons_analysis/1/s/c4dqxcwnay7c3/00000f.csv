@@ -1,4 +1,0 @@
-"0",""
-"0","tau <- fixef(fit_Q1_prompted)[grep(""Intercept"", rownames(fixef(fit_Q1_unprompted))), ""Estimate""]"
-"2","Error: object 'fit_Q1_prompted' not found
-"

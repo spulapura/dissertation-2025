@@ -1,5 +1,0 @@
-"0","posterior_data2 <- posterior %>% "
-"0","  filter(Utterance==""null"", Panel==""unprompted"") "
-"0",""
-"0","ggplot(posterior_data2, aes(x = V, y = Prob)) +"
-"0","    geom_bar(stat = ""identity"")"

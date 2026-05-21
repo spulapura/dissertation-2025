@@ -1,6 +1,0 @@
-"0",""
-"0","inf_mu <- readRDS(""~/Desktop/inf_mu.rds"")"
-"0",""
-"0","thresholds <- c(0.003114979, 0.030232641, 0.126028451, 0.392894378, 0.585036144, 0.935269628)"
-"0",""
-"0","inf_mu$rating <- findInterval(inf_mu$Prob, thresholds) + 1"

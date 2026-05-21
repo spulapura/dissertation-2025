@@ -1,6 +1,0 @@
-"0",""
-"0","#cached L0 lookups"
-"0",""
-"0","L0_matrix_null <- sapply(mu_vals, function(mu) evidential(mu, nu, ""null"")$Posterior)"
-"0","L0_matrix_long <- sapply(mu_vals, function(mu) evidential(mu, nu, ""long"")$Posterior)"
-"0",""
