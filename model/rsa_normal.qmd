@@ -411,3 +411,5 @@ ggplot(ev_plot, aes(x = mu, y = nu, fill = EV_diff)) +
 ```
 
 RQ2 effect. Also seems sensible that the backfire should only occur when the hyperprior has high mean/low standard deviation (i.e. where the listener would strongly agree even without the reasons). However, the effect is very small (needed a log scale to make it show up well in the heatmap) and occurs only for very high means. Perhaps fussing with cost, alpha, and especially the likelihood can create a stronger effect?
+
+As far as I can tell, switching from beta to normal fixed the issue i was having before where the effect was clustered in the wrong spot... I think that happened because beta spikes/inverts at extreme values of the mean, using an unbounded scale fixes the problem
