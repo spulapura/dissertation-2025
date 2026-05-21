@@ -1,0 +1,4 @@
+"0","ggplot(figure1_data, aes(x = V, y = Prob)) +"
+"0","  geom_area(data = subset(figure1_data, Distribution == ""Prior""),"
+"0","            fill = ""gray50"", alpha = 0.4) "
+"0",""

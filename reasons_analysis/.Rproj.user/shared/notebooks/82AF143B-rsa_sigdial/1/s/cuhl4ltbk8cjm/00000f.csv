@@ -1,0 +1,2 @@
+"0",""
+"0","saveRDS(posterior, file = ""~/Desktop/posterior.rds"")"

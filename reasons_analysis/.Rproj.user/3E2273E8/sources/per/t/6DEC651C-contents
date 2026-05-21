@@ -1,0 +1,435 @@
+---
+title: "rsa_sigdial"
+format: html
+editor: visual
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+
+V_vals <- seq(0.0001, 0.9999, length.out = 2000) 
+dV <- diff(V_vals)[1]
+
+mu_vals <- seq(0.25, 0.75, length.out = 21)
+dMu <- diff(mu_vals)[1]
+
+sample_mu_vals <- c(0.25, 0.5, 0.75)
+
+plot_mu_vals <- c(0.3, 0.4, 0.5, 0.6, 0.7)
+
+cost <- c(null = 0, long = 0.3) 
+alpha = 10
+nu = 10
+```
+
+```{r}
+
+dV <- diff(V_vals)[1]
+
+prior_L0 <- function(mu, nu) {
+  a <- mu*nu
+  b <- (1-mu) * nu
+  dbeta(V_vals, a, b)
+}
+
+likelihood_L0 <- function(R) {
+  if(R == "null") rep(1, length(V_vals)) else V_vals
+}
+
+evidential <- function(mu, nu, R) {
+  prior <- prior_L0(mu, nu)
+  likelihood <- likelihood_L0(R)
+  unnorm_posterior <- prior * likelihood
+  Z <- sum(unnorm_posterior) * dV
+  posterior <- unnorm_posterior / Z
+  data.frame(V = V_vals, 
+             Prior = prior, 
+             Posterior = posterior,
+             UnnormPosterior = unnorm_posterior,
+             mu = mu, 
+             nu = nu, 
+             R = R)
+}
+
+kl_divergence <- function(p, q, eps = 1e-10) {
+  mask <- p > 0
+  sum(p[mask] * log(p[mask] / (q[mask] + eps))) * dV
+}
+
+```
+
+```{r}
+
+#this is just for the graph for the beginning section not part of model
+library(ggplot2)
+mus <- c(0.3, 0.4, 0.5, 0.6, 0.7)
+nu <- 10
+
+
+dv <- diff(V_vals)[1] 
+
+df <- do.call(rbind, lapply(mus, function(mu) {
+  alpha <- mu * nu
+  beta  <- (1 - mu) * nu
+  
+  probs <- dbeta(V_vals, alpha, beta)
+  
+  data.frame(
+    V = V_vals,
+    P = probs,
+    mu = factor(mu)
+  )
+}))
+
+print(tapply(df$P, df$mu, sum))
+ggplot(df, aes(x = V, y = P, color = mu)) +
+  geom_line(linewidth = 1.5) +
+  labs(
+    title = expression(paste("Possible priors ", pi[mu])), 
+    x = "V",
+    y = expression(pi[mu](V)),
+    color = expression(mu)
+  ) +
+  theme_minimal() +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA),
+  )
+```
+
+```{r, fig.width=10, fig.height=2.5}
+
+#literal listener plots
+figure1_data <- lapply(sample_mu_vals, function(m) {
+  evidential(m, nu, "long") %>%
+    bind_rows() %>%
+    mutate(sample_mu = m)
+}) %>%
+  bind_rows() %>%
+  pivot_longer(cols = c("Prior", "Posterior"),
+               names_to = "Distribution",
+               values_to = "Prob")
+
+posterior_means <- figure1_data %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(sample_mu) %>%
+  summarise(post_mean = sum(V * Prob) * dV, .groups = "drop")
+
+figure1_plot <- ggplot(figure1_data,
+                       aes(x = V, y = Prob,
+                           fill = Distribution,
+                           color = Distribution)) +
+  geom_area(alpha = 0.3, position = "identity") +
+  geom_line(linewidth = 0.8) +
+  geom_vline(aes(xintercept = mu),
+             linetype = "dashed",
+             color = "gray50",
+             linewidth = 0.5) +
+  geom_vline(data = posterior_means,
+             aes(xintercept = post_mean),
+             linetype = "dashed",
+             color = "blue",
+             linewidth = 0.5) +
+ facet_wrap(
+  ~ sample_mu,
+  labeller = as_labeller(
+    function(x) paste0("mu == ", x),
+    default = label_parsed
+  )
+)+
+  scale_fill_manual(name = "Utterance", 
+                    values = c("Prior" = "gray50", "Posterior" = "blue"),
+                    labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  scale_color_manual(name = "Utterance", 
+                     values = c("Prior" = "gray50", "Posterior" = "blue"),
+                     labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  theme_bw() +
+  labs(
+    title = "Bayesian update with no pragmatic reasoning",
+    x = "V",
+    y = expression(paste(P[L[0]^mu], "(V|R)"))
+  )
+
+print(figure1_plot)
+```
+
+```{r}
+
+#cached L0 lookups
+
+L0_matrix_null <- sapply(mu_vals, function(mu) evidential(mu, nu, "null")$Posterior)
+L0_matrix_long <- sapply(mu_vals, function(mu) evidential(mu, nu, "long")$Posterior)
+
+```
+
+util_null \<- inf_null - cost\["null"\]
+
+util_long \<- inf_long - cost\["long"\]
+
+```{r}
+#pragmatic speaker
+
+mu_grid <- expand.grid(
+  mu_i = 1:length(mu_vals)
+)
+
+mu_grid$mu <- mu_vals[mu_grid$mu_i]
+
+s_probs <- mapply(function(i) {
+
+  # informativity
+  inf_null <- 0
+  inf_long <- kl_divergence(L0_matrix_long[, i], L0_matrix_null[, i])
+
+  # utility
+  util_null <- inf_null - cost["null"]
+  util_long <- inf_long - cost["long"]
+
+  util_null_prompt <- 0
+  util_long_prompt <- 1
+
+  #softmax unprompted
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+
+  #softmax prompted
+  null_numer_prompt <- exp(alpha * util_null_prompt)
+  long_numer_prompt <- exp(alpha * util_long_prompt)
+  denom_prompt <- null_numer_prompt + long_numer_prompt
+
+  c(
+    null_unprompted = null_numer / denom,
+    long_unprompted = long_numer / denom,
+    null_prompted   = null_numer_prompt / denom_prompt,
+    long_prompted   = long_numer_prompt / denom_prompt
+  )
+
+}, mu_grid$mu_i)
+
+mu_grid$prob_null_unprompted <- s_probs[1, ]
+mu_grid$prob_long_unprompted <- s_probs[2, ]
+mu_grid$prob_null_prompted   <- s_probs[3, ]
+mu_grid$prob_long_prompted   <- s_probs[4, ]
+
+```
+
+```{r, fig.width=10, fig.height=2.5}
+
+#speaker plot
+
+speaker_data <- mu_grid %>%
+  pivot_longer(
+    cols = starts_with("prob_"),
+    names_to = c("Utterance", "Panel"),
+    names_pattern = "prob_(.*)_(.*)",
+    values_to = "Prob"
+  )
+speaker_data <- speaker_data %>%
+  mutate(
+    Utterance = factor(Utterance, levels = c("null", "long")),
+    Panel = factor(Panel, levels = c("unprompted", "prompted"))
+  )
+
+figure2_plot <- ggplot(speaker_data,
+                       aes(x = mu, y = Prob, color = Utterance)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ Panel, 
+      labeller = as_labeller(c(
+      unprompted = "(a) S1 utterance choice, unprompted",
+      prompted   = "(b) S1 utterance choicer, prompted"
+    ))) +
+  scale_color_manual(
+    values = c(null = "gray30", long = "blue"),
+    labels = c(null = "null (R=0)", long = "long (R=4)")
+  ) +
+  theme_bw() +
+  labs(
+    title = "Pragmatic speaker utterance probabilities",
+    x = expression(mu),
+    y = expression(P[S[1]](R ~ "|" ~ mu))
+  ) +
+  theme(aspect.ratio = 0.308)
+
+print(figure2_plot)
+```
+
+```{r}
+hyperprior_mu <- dbeta(mu_vals, 0.5 * 5, 0.5 * 5)
+
+p_mu <- hyperprior_mu[mu_grid$mu_i]
+p_mu <- p_mu / (sum(p_mu) * dMu)
+
+p_null_unnorm_unprompted <- mu_grid$prob_null_unprompted * p_mu
+p_long_unnorm_unprompted <- mu_grid$prob_long_unprompted * p_mu
+
+mu_grid$p_null_unprompted <- p_null_unnorm_unprompted / (sum(p_null_unnorm_unprompted) * dMu)
+mu_grid$p_long_unprompted <- p_long_unnorm_unprompted / (sum(p_long_unnorm_unprompted) * dMu)
+
+p_null_unnorm_prompted <- mu_grid$prob_null_prompted * p_mu
+p_long_unnorm_prompted <- mu_grid$prob_long_prompted * p_mu
+
+mu_grid$p_null_prompted <- p_null_unnorm_prompted / (sum(p_null_unnorm_prompted) * dMu)
+mu_grid$p_long_prompted <- p_long_unnorm_prompted / (sum(p_long_unnorm_prompted) * dMu)
+
+```
+
+```{r, fig.width=10, fig.height=2.5}
+
+L1_part1 <- mu_grid %>%
+  pivot_longer(
+    cols = c(
+      p_null_unprompted, p_long_unprompted,
+      p_null_prompted, p_long_prompted
+    ),
+    names_to = c("Type", "Panel"),
+    names_pattern = "p_(.*)_(.*)",
+    values_to = "Prob"
+  ) %>%
+  mutate(
+    Type = factor(Type, levels = c("null", "long")),
+    Panel = factor(Panel, levels = c("unprompted", "prompted"))
+  )
+
+
+L1_part1_plot <- ggplot(
+  L1_part1,
+  aes(x = mu, y = Prob, color = Type, fill = Type)
+) +
+  geom_area(alpha = 0.1, position = "identity") +
+  geom_line(linewidth = 0.9) +
+
+  scale_color_manual(
+    name = "Utterance",
+    values = c(null = "grey50", long = "blue"),
+    labels = c(null = "null (R=0)", long = "long (R=4)")
+  ) +
+
+  scale_fill_manual(
+    name = "Utterance",
+    values = c(null = "gray50", long = "blue"),
+    labels = c(null = "null (R=0)", long = "long (R=4)")
+  ) +
+
+  facet_wrap(
+    ~ Panel,
+    nrow = 1,
+    labeller = as_labeller(c(
+      unprompted = "(a) L1 inferred prior, unprompted",
+      prompted   = "(b) L1 inferred prior, prompted"
+    ))
+  ) +
+
+  theme_bw() +
+  labs(
+    x = expression(mu),
+    y = expression(paste(P[L1], "(", mu, "|R)")),
+    title = "Pragmatic listener inferred prior"
+  ) +
+  theme(aspect.ratio = 0.308)
+
+print(L1_part1_plot)
+```
+
+```{r}
+
+#get posteriors by taking a weighted average over all mu values
+
+p_V_null_unprompted <- (L0_matrix_null %*% mu_grid$p_null_unprompted) * dMu
+p_V_long_unprompted <- (L0_matrix_long %*% mu_grid$p_long_unprompted) * dMu
+
+p_V_null_prompted <- (L0_matrix_null %*% mu_grid$p_null_prompted) * dMu
+p_V_long_prompted <- (L0_matrix_long %*% mu_grid$p_long_prompted) * dMu
+
+posterior <- rbind(
+  data.frame(V = V_vals, Prob = p_V_null_unprompted, Utterance = "null"),
+  data.frame(V = V_vals, Prob = p_V_long_unprompted, Utterance = "long"),
+  data.frame(V = V_vals, Prob = p_V_null_prompted, Utterance = "null_prompt"),
+  data.frame(V = V_vals, Prob = p_V_long_prompted, Utterance = "long_prompt")
+)
+
+```
+
+```{r}
+
+posterior <- posterior %>%
+  mutate(
+    Type = if_else(grepl("^null", Utterance), "null", "long"),
+    Panel = if_else(Utterance %in% c("null", "long"),
+                    "unprompted", "prompted")
+  )
+
+pm <- posterior %>%
+  group_by(Utterance) %>%
+  summarize(mean = sum(V * Prob) * dV, .groups = "drop")
+
+pm <- pm %>%
+  mutate(
+    Type = if_else(grepl("^null", Utterance), "null", "long"),
+    Panel = if_else(Utterance %in% c("null", "long"),
+                    "unprompted", "prompted")
+  )
+
+posterior$Panel <- factor(posterior$Panel,
+                          levels = c("unprompted", "prompted"))
+
+pm$Panel <- factor(pm$Panel,
+                   levels = c("unprompted", "prompted"))
+```
+
+```{r, fig.width=10, fig.height=2.5}
+
+posterior_plot <- ggplot(posterior, aes(x = V, y = Prob, color = Type, fill = Type)) +
+  geom_area(alpha = 0.1, position = "identity") + 
+  geom_line(size = 0.9) +
+  geom_vline(data = pm,
+             aes(xintercept = mean, color = Type),
+             linetype = "dashed",
+             linewidth = 0.6) +
+  scale_fill_manual(values = c("null" = "gray50", "long" = "blue"),
+                    labels = c("null" = "null (R=0)", "long" = "long (R=4)"), name="Utterance") +
+  scale_color_manual(values = c("null" = "gray50", "long" = "blue"),
+                     labels = c("null" = "null (R=0)", "long" = "long (R=4)"), name="Utterance") +
+  facet_wrap(~ Panel, nrow = 1,
+             labeller = as_labeller(c(
+               unprompted = "(a) L1 posterior, unprompted",
+               prompted = "(b) L1 posterior, prompted"))) +
+  theme_bw() +
+  theme(aspect.ratio = .308) +
+
+  labs(x = "V", y = expression(paste(P[L1], "(V|R)"     )), title = "Pragmatic listener posterior distribution" )
+
+print(posterior_plot)
+
+```
+
+```{r}
+
+saveRDS(posterior, file = "~/Desktop/posterior.rds")
+```
+
+```{r}
+df <- evidential(0.5, nu, "long") %>%
+    bind_rows() %>%
+    pivot_longer(cols = c("Prior", "Posterior"),
+                 names_to = "Type",
+                 values_to = "Prob")
+
+evidential_posterior<- bind_rows(
+  df %>% mutate(Panel = "prompted"),
+  df %>% mutate(Panel = "unprompted")
+)
+
+saveRDS(evidential_posterior, file = "~/Desktop/evidential_posterior.rds")
+```
+
+```{r}
+saveRDS(L1_part1, file = "~/Desktop/inf_mu.rds")
+```
+
+```         
+```

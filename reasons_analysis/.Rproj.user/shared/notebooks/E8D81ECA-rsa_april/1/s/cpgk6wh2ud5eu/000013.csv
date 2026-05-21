@@ -1,0 +1,6 @@
+"0",""
+"0","ggplot(mu_nu_grid, aes(x = mu, y = nu, fill = joint_diff)) +"
+"0","    geom_tile() +"
+"0","    scale_fill_gradient2(low = ""red"", mid = ""white"", high = ""blue"", midpoint = 0) +"
+"0","    labs(title = ""L1 infers prior (mu, nu) from long explanation"",  x = ""mu"", y = ""nu"", fill = """") +"
+"0","    theme_minimal()"

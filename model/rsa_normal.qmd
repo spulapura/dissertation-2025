@@ -1,0 +1,413 @@
+---
+title: "rsa_normal"
+format: html
+---
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+
+#these ranges are chosen pretty arbitrarily
+
+V_vals <- seq(-50, 50, length.out = 201) 
+dV <- diff(V_vals)[1]
+
+mu_vals <- seq(-50, 50, length.out = 201)
+dMu <- diff(mu_vals)[1]
+sample_mu_vals <- c(-5, 0, 5)
+
+sigma_vals <- seq(2, 50, length.out = 25)
+dSigma <- diff(sigma_vals)[1]
+
+cost <- c(null = 0, long = 0.5) 
+alpha = 1
+```
+
+```{r}
+
+#beta replaced with normal
+prior_L0 <- function(mu, sigma) {
+  dnorm(V_vals, mu, sigma)
+}
+
+#i replaced the linear likelihood with logistic
+#same principle as before but since i'm using a grid approximation for an unbounded scale rather than the unit interval now
+#i want a bit of excess on either side of the peak so i dont clip the tails too much
+#but if i add in that buffer, the linear likelihood is almost identical for values in the target range (ie the peak) when you norm it
+#so i need something which will preserve that "monotonic increase" but steeper around the middle (ie sigmoid shape)
+
+likelihood_L0 <- function(R) {
+  if(R == "null") rep(1, length(V_vals)) else plogis(V_vals) 
+}
+
+evidential <- function(mu, sigma, R) {
+  prior <- prior_L0(mu, sigma)
+  likelihood <- likelihood_L0(R)
+  unnorm_posterior <- prior * likelihood
+  norm <- sum(unnorm_posterior) * dV
+  posterior <- unnorm_posterior / norm
+  data.frame(V = V_vals, 
+             Prior = prior, 
+             Posterior = posterior,
+             UnnormPosterior = unnorm_posterior,
+             mu = mu, 
+             sigma = sigma, 
+             R = R)
+}
+
+#not sure if this is implemented correctly i just looked it up lol
+kl_divergence <- function(p, q, eps = 1e-10) {
+  mask <- p > 0
+  sum(p[mask] * log(p[mask] / (q[mask] + eps))) * dV
+}
+
+```
+
+```{r}
+
+#this is just for visualizing possible priors, not a model calculation
+mus <- seq(-4, 4, length.out=9)
+sigmas <- c(0.5, 2)
+
+possible_priors <- do.call(rbind, lapply(sigmas, function(s)
+  do.call(rbind, lapply(mus, function(m)
+    data.frame(V = V_vals, P = dnorm(V_vals, m, s), mu = factor(m), sigma = factor(s))
+  ))
+))
+
+# ggplot(possible_priors, aes(x = V, y = P, color = mu)) +
+#   geom_line(linewidth = 0.5) +
+#   labs(
+#     title = expression(paste("Possible priors ", pi[mu])), 
+#     x = "V",
+#     y = expression(pi[mu](V)),
+#     color = expression(mu)
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     panel.border = element_rect(color = "black", fill = NA),
+#   )+
+#   scale_x_continuous(limits = c(-10, 10))+
+#   scale_y_continuous(limits = c(0, 1)) +
+#   facet_wrap(~ sigma, 
+#              labeller = as_labeller(c("0.5" = "sigma = 0.5", "2" = "sigma = 2")),
+#              ncol = 1)
+```
+
+```{r, fig.width=10, fig.height=2.5}
+
+#literal listener plots
+figure1_data <- lapply(sample_mu_vals, function(m) {
+  evidential(m, 2, "long") %>%
+    bind_rows() %>%
+    mutate(sample_mu = m)
+}) %>%
+  bind_rows() %>%
+  pivot_longer(cols = c("Prior", "Posterior"),
+               names_to = "Distribution",
+               values_to = "Prob")
+
+posterior_means <- figure1_data %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(sample_mu) %>%
+  summarise(post_mean = sum(V * Prob) * dV, .groups = "drop")
+
+figure1_plot <- ggplot(figure1_data,
+                       aes(x = V, y = Prob,
+                           fill = Distribution,
+                           color = Distribution)) +
+  geom_area(alpha = 0.3, position = "identity") +
+  geom_line(linewidth = 0.8) +
+  geom_vline(aes(xintercept = mu),
+             linetype = "dashed",
+             color = "gray50",
+             linewidth = 0.5) +
+  geom_vline(data = posterior_means,
+             aes(xintercept = post_mean),
+             linetype = "dashed",
+             color = "blue",
+             linewidth = 0.5) +
+ facet_wrap(
+  ~ sample_mu,
+  labeller = as_labeller(
+    function(x) paste0("mu == ", x),
+    default = label_parsed
+  )
+)+
+  scale_fill_manual(name = "Utterance", 
+                    values = c("Prior" = "gray50", "Posterior" = "blue"),
+                    labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  scale_color_manual(name = "Utterance", 
+                     values = c("Prior" = "gray50", "Posterior" = "blue"),
+                     labels = c("Prior" = "null (R=0)", "Posterior" = "long (R=4)")) +
+  theme_bw() +
+  labs(
+    title = "Bayesian update with no pragmatic reasoning",
+    x = "V",
+    y = expression(paste(P[L[0]^mu], "(v|R)"))
+  ) +
+  scale_x_continuous(limits = c(-8, 8))
+
+print(figure1_plot)
+```
+
+```{r}
+
+L0_data <- lapply(mu_vals, function(m) 
+            lapply(sigma_vals, function(s) evidential(m, s, "long"))) %>%
+            bind_rows() %>%
+            pivot_longer(cols = c("Prior", "Posterior"), names_to = "Distribution",values_to ="Prob")
+
+L0_heatmap <- L0_data  %>%
+  filter(Distribution == "Posterior") %>%
+  group_by(mu, sigma) %>%
+  summarise(post_mean = sum(V * Prob)*dV, .groups = "drop") %>%
+  mutate(delta_means = post_mean - mu) %>% 
+  filter(mu >= -5, mu <= 5) 
+
+
+ggplot(L0_heatmap, aes(x = mu, y = sigma, fill = delta_means)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+  labs(title = "Change in L0 expected value (v) after long explanation (4R)", x = "Prior mu", y = "Prior sigma", fill = "Diff") +
+  theme_minimal() +
+  scale_x_continuous(limits = c(-5, 5))
+```
+
+This plot makes sense to me... the posterior should always increase from the prior, but that increase should be greater when the prior is unfavorable (low mu), or when it's nearly flat (high sigma).
+
+```{r}
+#just caching the lookups since this takes a bit long to run 
+
+L0_array_null <- array(sapply(sigma_vals, function(s)
+                        sapply(mu_vals, function(m)
+                        evidential(m, s, "null")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(sigma_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, sigma = sigma_vals)
+)
+
+L0_array_long <- array(sapply(sigma_vals, function(s)
+                        sapply(mu_vals, function(m)
+                        evidential(m, s, "long")$Posterior)),
+  dim = c(length(V_vals), length(mu_vals), length(sigma_vals)),
+  dimnames = list(V = V_vals, mu = mu_vals, sigma = sigma_vals))
+
+mu_sigma_grid <- expand.grid(
+  mu_j = 1:length(mu_vals), 
+  sigma_k = 1:length(sigma_vals)
+)
+
+mu_sigma_grid$mu <- mu_vals[mu_sigma_grid$mu_j]
+mu_sigma_grid$sigma <- sigma_vals[mu_sigma_grid$sigma_k]
+```
+
+```{r}
+
+s_probs <- mapply(function(j, k) {
+  #informativity 
+  inf_null <- 0
+  inf_long <- kl_divergence(L0_array_long[, j, k], L0_array_null[, j, k])
+  
+  #utility
+  util_null <- inf_null - cost["null"]
+  util_long <- inf_long - cost["long"]
+
+  #softmax
+  null_numer <- exp(alpha * util_null)
+  long_numer <- exp(alpha * util_long)
+  denom <- null_numer + long_numer
+  
+  return(c(null_numer/denom, long_numer/denom, inf_null, inf_long))
+  
+}, mu_sigma_grid$mu_j, mu_sigma_grid$sigma_k)
+
+mu_sigma_grid$prob_null <- s_probs[1, ]
+mu_sigma_grid$prob_long <- s_probs[2, ]
+mu_sigma_grid$inf_null <- s_probs[3, ]
+mu_sigma_grid$inf_long <- s_probs[4, ]
+```
+
+```{r}
+
+speaker_plot <- mu_sigma_grid %>%
+  mutate(prob_diff = prob_long - prob_null) %>%
+  filter(mu >= -5, mu <= 5) 
+
+ggplot(speaker_plot, aes(x = mu, y = sigma, fill = prob_diff)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "red", mid = "white", high = "blue", midpoint = 0,
+    breaks = c(min(speaker_plot$prob_diff), 0, max(speaker_plot$prob_diff)),
+    labels = c("Prefers null (0R)", "", "Prefers long (4R)")
+  ) +
+  labs(
+    title = "Pragmatic speaker utterance preference",
+    subtitle = "P(long|mu, sigma) - P(null| mu, sigma)",
+    x = "mu", y = "sigma", fill = ""
+  ) +
+  theme_minimal()
+```
+
+This also makes sense to me... when the prior is basically flat (high sigma) the reasons are always informative, and the location of the mean shouldn't make a huge difference in how informative the reasons are. The effect of the mean is more obvious when the standard deviation is smaller, i.e. the reasons are very informative for an unfavorable prior, and very uninformative for a favorable prior.
+
+```{r}
+
+speaker_mu_data <- mu_sigma_grid %>%
+  filter(sigma_vals[sigma_k] %in% c(2, 50)) %>%
+  mutate(sigma = sigma_vals[sigma_k]) %>%
+  pivot_longer(cols = c("prob_null", "prob_long"),
+               names_to = "Utterance", values_to = "Probability") %>%
+  mutate(Utterance = recode(Utterance, "prob_null" = "null", "prob_long" = "long"))
+
+speaker_mu_plot <- ggplot(speaker_mu_data, aes(x = mu_vals[mu_j], y = Probability, color = Utterance)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ sigma, ncol = 1, labeller = as_labeller(
+    function(x) paste0("sigma == ", x), default = label_parsed)) +
+  scale_color_manual(name = "Utterance",
+                     values = c("null" = "gray50", "long" = "blue"),
+                     labels = c("null" = "null (R=0)", "long" = "long (R=4)")) +
+  labs(x = expression(mu), y = "P(R | μ, σ)") +
+  theme_bw() +
+  scale_x_continuous(limits = c(-10, 10))
+
+print(speaker_mu_plot)
+```
+
+For completeness, same type of graph as I had before, but for 2 different sigmas. The crossover happens much later for the high sigma.
+
+```{r}
+
+mean_mu = 0.5
+mean_sigma = 2
+  
+hyperprior_mu <- dnorm(mu_vals, 0, 5)
+p_mu <- hyperprior_mu[mu_sigma_grid$mu_j]
+p_mu <- p_mu / (sum(p_mu) * dMu)
+
+hyperprior_sigma <- dnorm(sigma_vals, 5, 5)
+p_sigma <- hyperprior_sigma[mu_sigma_grid$sigma_k]
+p_sigma <- p_sigma / (sum(p_sigma) * dSigma)
+
+
+#L1(mu, sigma|R) = speaker choice probs * hyperpriors
+joint_null_unnorm <- mu_sigma_grid$prob_null * p_mu * p_sigma 
+joint_long_unnorm <- mu_sigma_grid$prob_long * p_mu * p_sigma 
+
+mu_sigma_grid$joint_null <- joint_null_unnorm / (sum(joint_null_unnorm) * dMu * dSigma)
+mu_sigma_grid$joint_long <- joint_long_unnorm / (sum(joint_long_unnorm) * dMu * dSigma)
+mu_sigma_grid$joint_diff <- mu_sigma_grid$joint_long - mu_sigma_grid$joint_null
+
+```
+
+```{r}
+mu_sigma_grid %>%
+  filter(mu >= -5, mu <= 5) %>%
+  filter(sigma >= -5, sigma <=20) %>%
+  ggplot(aes(x = mu, y = sigma, fill = joint_diff)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+    labs(title = "L1 infers prior (mu, sigma) from long explanation",  x = "mu", y = "sigma", fill = "") +
+    theme_minimal()
+```
+
+This plot shows the difference in probability of L1 selecting a particular prior (mu, sigma) from the long vs the null utterance. Generally makes sense that he will infer lower means from the long utterance, and higher means from the null, and that distinction will go away for higher standard deviation (where there isn't such a dramatic crossover for the speaker). Also seems to be some influence of the (gaussian) hyperprior (i.e. some dropoff when mu/sigma get too far away from the hyperprior). If it were a flat hyperprior, the sigmoid induced by the speaker softmax would make the difference greatest at the extreme values.
+
+```{r}
+
+L1_mu_data <- mu_sigma_grid %>%
+  filter(sigma_vals[sigma_k] %in% c(2, 50)) %>%
+  pivot_longer(cols = c("joint_null", "joint_long"), 
+               names_to = "Utterance", values_to = "Density") %>%
+  mutate(sigma = sigma_vals[sigma_k],
+         Utterance = recode(Utterance, "joint_null" = "null", "joint_long" = "long")) %>%
+  group_by(sigma, Utterance) %>%
+  mutate(Density = Density / (sum(Density) * dMu)) %>%
+  ungroup()
+
+L1_mu_means <- L1_mu_data %>%
+  group_by(sigma, Utterance) %>%
+  summarise(mean_mu = sum(mu_vals[mu_j] * Density) * dMu, .groups = "drop")
+
+L1_mu_plot <- ggplot(L1_mu_data, aes(x = mu_vals[mu_j], y = Density, color = Utterance, fill = Utterance)) +
+  geom_area(alpha = 0.3, position = "identity") +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~ sigma, ncol = 1) +
+  labs(x = expression(mu), y = "Density") +
+  theme_bw() +
+  scale_fill_manual(name = "Utterance", 
+                    values = c("null" = "gray50", "long" = "blue"),
+                    labels = c("null" = "null (R=0)", "long" = "long (R=4)")) +
+  scale_color_manual(name = "Utterance", 
+                     values = c("null" = "gray50", "long" = "blue"),
+                     labels = c("null" = "null (R=0)", "long" = "long (R=4)")) +
+  scale_x_continuous(limits = c(-10, 10))
+print(L1_mu_plot)
+```
+
+RQ1 effect. Again for completeness, repeating the old plots with 2 different fixed values of sigma. With lower sigma, L1 infers lower means from the long utterance vs the null. For higher sigma they are about the same, reproducing the hyperprior over mu (which makes sense because if the listener thinks the speaker thinks the standard deviation is very high, her utterance choice will not really help the him infer mu, since she'll generally prefer the reasons in any case).
+
+```{r}
+
+#see how different combinations of the hyperpriors affect the inference
+hyperparams <- expand.grid(mean_mu = mu_vals, mean_sigma = sigma_vals)
+
+#lot of copied code i'll edit it down later
+# also this takes a while to run sorry
+L1_probs <- mapply(function (mean_mu, mean_sigma) {
+  
+  hyperprior_mu <- dnorm(mu_vals, mean_mu, 5)
+  p_mu <- hyperprior_mu[mu_sigma_grid$mu_j]
+  p_mu <- p_mu / (sum(p_mu) * dMu)
+  
+  hyperprior_sigma <- dnorm(sigma_vals, mean_sigma, 5)
+  p_sigma <- hyperprior_sigma[mu_sigma_grid$sigma_k]
+  p_sigma <- p_sigma / (sum(p_sigma) * dSigma)
+  
+  #L1(mu, sigma|R) = speaker choice probs * hyperpriors
+  joint_null_unnorm <- mu_sigma_grid$prob_null * p_mu * p_sigma 
+  joint_long_unnorm <- mu_sigma_grid$prob_long * p_mu * p_sigma 
+  
+  mu_sigma_grid$joint_null <- joint_null_unnorm / (sum(joint_null_unnorm) * dMu * dSigma)
+  mu_sigma_grid$joint_long <- joint_long_unnorm / (sum(joint_long_unnorm) * dMu * dSigma)
+  
+  
+  L0_matrix_null <- matrix(L0_array_null, nrow = length(V_vals)) 
+  L0_matrix_long <- matrix(L0_array_long, nrow = length(V_vals))
+  
+  #conditionalization from new prior
+  p_V_null <- (L0_matrix_null %*% mu_sigma_grid$joint_null) * dMu * dSigma
+  p_V_long <- (L0_matrix_long %*% mu_sigma_grid$joint_long) * dMu * dSigma
+
+
+  #expected value of each distribution
+  c(EV_null = sum(V_vals * p_V_null),
+    EV_long = sum(V_vals * p_V_long))
+  
+}, hyperparams$mean_mu, hyperparams$mean_sigma)
+
+EV_df <- data.frame(
+  mu = hyperparams$mean_mu,
+  nu = hyperparams$mean_sigma,
+  EV_null = L1_probs["EV_null", ],
+  EV_long = L1_probs["EV_long", ]
+)
+
+```
+
+```{r}
+ev_plot <- EV_df %>%
+  mutate(EV_diff = log(EV_long - EV_null)) #to make the difference show up a little more, the backfire is quite small with this particular choice of parameters
+
+ggplot(ev_plot, aes(x = mu, y = nu, fill = EV_diff)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+    labs(title = "L1 expected value diff",  x = "mu", y = "sigma", fill = "") +
+    theme_minimal()
+```
+
+RQ2 effect. Also seems sensible that the backfire should only occur when the hyperprior has high mean/low standard deviation (i.e. where the listener would strongly agree even without the reasons). However, the effect is very small (needed a log scale to make it show up well in the heatmap) and occurs only for very high means. Perhaps fussing with cost, alpha, and especially the likelihood can create a stronger effect?

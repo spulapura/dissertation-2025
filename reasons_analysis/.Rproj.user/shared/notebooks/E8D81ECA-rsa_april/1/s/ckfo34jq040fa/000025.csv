@@ -1,0 +1,7 @@
+"0",""
+"0","figure1_data %>% ggplot(aes(x = mu, y = nu, fill = delta_means)) +"
+"0","  geom_tile() +"
+"0","  scale_fill_gradient2(low = ""red"", mid = ""white"", high = ""blue"", midpoint = 0) +"
+"0","  labs(title = ""Change in L0 expected opinion (V) after long explanation (4R)"", x = ""Prior mu"", y = ""Prior nu"", fill = ""Delta"") +"
+"0","  theme_minimal()"
+"0",""

@@ -1,0 +1,3 @@
+"0","saveRDS(fit_Q1_unprompted, file = ""~/fit_Q1_unprompted.rds"")"
+"2","Error: object 'fit_Q1_unprompted' not found
+"
